@@ -23,6 +23,19 @@ impl LanguageMode {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum CleanupStyle {
+    Light,
+    Strong,
+}
+
+impl Default for CleanupStyle {
+    fn default() -> Self {
+        CleanupStyle::Light
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Settings {
@@ -33,6 +46,10 @@ pub struct Settings {
     pub cleanup_model: String,
     pub meridian_url: String,
     pub groq_url: String,
+    pub cleanup_style: CleanupStyle,
+    pub wizard_done: bool,
+    pub bubble_pos: Option<(i32, i32)>,
+    pub autostart: bool,
 }
 
 impl Default for Settings {
@@ -44,6 +61,10 @@ impl Default for Settings {
             cleanup_model: "claude-sonnet-5".into(),
             meridian_url: "http://127.0.0.1:3456".into(),
             groq_url: "https://api.groq.com".into(),
+            cleanup_style: CleanupStyle::Light,
+            wizard_done: false,
+            bubble_pos: None,
+            autostart: false,
         }
     }
 }
@@ -115,6 +136,30 @@ mod tests {
         let s = load(&p);
         assert_eq!(s.language, LanguageMode::Sk);
         assert_eq!(s.hotkey, "AltGr");
+        assert_eq!(s.cleanup_style, CleanupStyle::Light);
+        assert!(!s.wizard_done);
+        assert_eq!(s.bubble_pos, None);
+        assert!(!s.autostart);
+    }
+
+    #[test]
+    fn old_settings_file_without_new_fields_still_loads() {
+        let dir = tempfile::tempdir().unwrap();
+        let p = dir.path().join("settings.json");
+        // Simulates a Plan-1-era settings.json, written before cleanup_style,
+        // wizard_done, bubble_pos and autostart existed.
+        std::fs::write(
+            &p,
+            r#"{"hotkey":"AltGr","language":"auto","cleanup_enabled":true,
+                "cleanup_model":"claude-sonnet-5","meridian_url":"http://127.0.0.1:3456",
+                "groq_url":"https://api.groq.com"}"#,
+        )
+        .unwrap();
+        let s = load(&p);
+        assert_eq!(s.cleanup_style, CleanupStyle::Light);
+        assert!(!s.wizard_done);
+        assert_eq!(s.bubble_pos, None);
+        assert!(!s.autostart);
     }
 
     #[test]

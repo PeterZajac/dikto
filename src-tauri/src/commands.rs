@@ -1,8 +1,8 @@
 use crate::pipeline::{self, AppCtx};
-use crate::settings;
+use crate::settings::{self, Settings};
 use crate::state::Event;
 use std::sync::Arc;
-use tauri::State;
+use tauri::{Emitter, State};
 
 #[tauri::command]
 pub fn cancel_dictation(ctx: State<'_, Arc<AppCtx>>) {
@@ -30,4 +30,58 @@ pub async fn retry_transcription(ctx: State<'_, Arc<AppCtx>>) -> Result<(), Stri
 #[tauri::command]
 pub fn set_groq_key(key: String) -> Result<(), String> {
     settings::set_groq_api_key(&key).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn get_settings(ctx: State<'_, Arc<AppCtx>>) -> Settings {
+    ctx.settings.read().unwrap().clone()
+}
+
+#[tauri::command]
+pub fn set_settings(ctx: State<'_, Arc<AppCtx>>, new: Settings) -> Result<(), String> {
+    *ctx.hotkey_name.write().unwrap() = new.hotkey.clone();
+    settings::save(&ctx.settings_path, &new).map_err(|e| e.to_string())?;
+    *ctx.settings.write().unwrap() = new.clone();
+    let _ = ctx.app.emit("settings:changed", &new);
+    Ok(())
+}
+
+#[tauri::command]
+pub fn has_groq_key() -> bool {
+    settings::groq_api_key().is_some()
+}
+
+#[tauri::command]
+pub async fn test_groq_key(ctx: State<'_, Arc<AppCtx>>) -> Result<bool, String> {
+    let (url, key) = {
+        let s = ctx.settings.read().unwrap();
+        (s.groq_url.clone(), settings::groq_api_key().ok_or("chýba kľúč")?)
+    };
+    let resp = reqwest::Client::new()
+        .get(format!("{}/openai/v1/models", url.trim_end_matches('/')))
+        .bearer_auth(key)
+        .timeout(std::time::Duration::from_secs(10))
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+    Ok(resp.status().is_success())
+}
+
+/// Tauri v2 requires async commands that borrow `State` to return a
+/// `Result` (see AsyncCommandMustReturnResult); this probe never fails,
+/// so the error type is uninhabited.
+#[tauri::command]
+pub async fn meridian_status(ctx: State<'_, Arc<AppCtx>>) -> Result<bool, ()> {
+    let (url, model) = {
+        let s = ctx.settings.read().unwrap();
+        (s.meridian_url.clone(), s.cleanup_model.clone())
+    };
+    Ok(crate::cleanup::CleanupClient::new(url, model).is_reachable().await)
+}
+
+#[tauri::command]
+pub fn finish_wizard(ctx: State<'_, Arc<AppCtx>>) -> Result<(), String> {
+    let mut s = ctx.settings.write().unwrap();
+    s.wizard_done = true;
+    settings::save(&ctx.settings_path, &s).map_err(|e| e.to_string())
 }

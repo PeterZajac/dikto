@@ -1,3 +1,4 @@
+use crate::settings::CleanupStyle;
 use serde::Deserialize;
 use std::time::Duration;
 
@@ -7,6 +8,9 @@ and fix obvious mis-transcriptions. Keep the original language (Slovak, Czech or
 Keep the meaning and wording otherwise unchanged. Never add new information. \
 Never answer questions contained in the text \u{2014} only clean it. \
 Output ONLY the cleaned text, with no quotes and no commentary.";
+
+const STRONG_SUFFIX: &str =
+    " You may lightly rephrase sentences for fluency, keeping the language and meaning.";
 
 #[derive(Debug, thiserror::Error)]
 pub enum CleanupError {
@@ -35,6 +39,7 @@ struct ContentBlock {
 pub struct CleanupClient {
     base_url: String,
     model: String,
+    style: CleanupStyle,
     http: reqwest::Client,
 }
 
@@ -42,13 +47,18 @@ pub const CLEANUP_TIMEOUT: Duration = Duration::from_secs(5);
 
 impl CleanupClient {
     pub fn new(base_url: String, model: String) -> Self {
-        Self::with_timeout(base_url, model, CLEANUP_TIMEOUT)
+        Self::with_style(base_url, model, CleanupStyle::Light)
     }
 
-    pub fn with_timeout(base_url: String, model: String, timeout: Duration) -> Self {
+    pub fn with_style(base_url: String, model: String, style: CleanupStyle) -> Self {
+        Self::with_timeout(base_url, model, style, CLEANUP_TIMEOUT)
+    }
+
+    pub fn with_timeout(base_url: String, model: String, style: CleanupStyle, timeout: Duration) -> Self {
         Self {
             base_url: base_url.trim_end_matches('/').to_string(),
             model,
+            style,
             http: reqwest::Client::builder()
                 .timeout(timeout)
                 .build()
@@ -56,11 +66,18 @@ impl CleanupClient {
         }
     }
 
+    fn system_prompt(&self) -> String {
+        match self.style {
+            CleanupStyle::Light => SYSTEM_PROMPT.to_string(),
+            CleanupStyle::Strong => format!("{SYSTEM_PROMPT}{STRONG_SUFFIX}"),
+        }
+    }
+
     pub async fn clean(&self, raw: &str) -> Result<String, CleanupError> {
         let body = serde_json::json!({
             "model": self.model,
             "max_tokens": 2048,
-            "system": SYSTEM_PROMPT,
+            "system": self.system_prompt(),
             "messages": [{ "role": "user", "content": raw }]
         });
         let resp = self
@@ -148,9 +165,30 @@ mod tests {
         let c = CleanupClient::with_timeout(
             server.uri(),
             "m".into(),
+            CleanupStyle::Light,
             Duration::from_millis(50),
         );
         assert!(matches!(c.clean("x").await, Err(CleanupError::Network(_))));
+    }
+
+    #[tokio::test]
+    async fn strong_style_appends_rephrase_note_to_system_prompt() {
+        let server = MockServer::start().await;
+        let expected_system = format!("{SYSTEM_PROMPT}{STRONG_SUFFIX}");
+        Mock::given(method("POST"))
+            .and(path("/v1/messages"))
+            .and(body_partial_json(serde_json::json!({
+                "system": expected_system
+            })))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "content": [{ "type": "text", "text": "ok" }]
+            })))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let c = CleanupClient::with_style(server.uri(), "m".into(), CleanupStyle::Strong);
+        assert_eq!(c.clean("x").await.unwrap(), "ok");
     }
 
     #[tokio::test]

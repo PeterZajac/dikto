@@ -4,6 +4,7 @@ use crate::hotkey::HotkeySignal;
 use crate::settings::{self, Settings};
 use crate::state::{transition, Event, Phase};
 use crate::stt::SttClient;
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
 use tauri::{AppHandle, Emitter, Manager};
@@ -19,6 +20,10 @@ pub struct AppCtx {
     /// otherwise a stale task from a superseded take could clobber a new one.
     pub take_gen: AtomicU64,
     pub app: AppHandle,
+    /// Same Arc handed to hotkey::spawn — set_settings updates it live so a
+    /// hotkey change hot-applies without restarting the listener thread.
+    pub hotkey_name: Arc<RwLock<String>>,
+    pub settings_path: PathBuf,
 }
 
 pub(crate) fn apply(ctx: &AppCtx, ev: Event) -> Option<Phase> {
@@ -172,7 +177,7 @@ async fn finish(ctx: Arc<AppCtx>, gen: u64) {
 }
 
 pub async fn transcribe_and_deliver(ctx: Arc<AppCtx>, wav: Vec<u8>, gen: u64) {
-    let (groq_url, lang, cleanup_enabled, meridian_url, model) = {
+    let (groq_url, lang, cleanup_enabled, meridian_url, model, cleanup_style) = {
         let s = ctx.settings.read().unwrap();
         (
             s.groq_url.clone(),
@@ -180,6 +185,7 @@ pub async fn transcribe_and_deliver(ctx: Arc<AppCtx>, wav: Vec<u8>, gen: u64) {
             s.cleanup_enabled,
             s.meridian_url.clone(),
             s.cleanup_model.clone(),
+            s.cleanup_style,
         )
     };
     let Some(api_key) = settings::groq_api_key() else {
@@ -217,7 +223,10 @@ pub async fn transcribe_and_deliver(ctx: Arc<AppCtx>, wav: Vec<u8>, gen: u64) {
         if !advance(&ctx, gen, Event::TranscriptReady, Some("✨ upravujem text…")) {
             return; // cancelled meanwhile, or a stale take
         }
-        match CleanupClient::new(meridian_url, model).clean(&transcript.text).await {
+        match CleanupClient::with_style(meridian_url, model, cleanup_style)
+            .clean(&transcript.text)
+            .await
+        {
             Ok(cleaned) => cleaned,
             Err(_) => {
                 note = Some("vložené bez úprav");

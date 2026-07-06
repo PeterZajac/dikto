@@ -25,11 +25,23 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             commands::cancel_dictation,
             commands::retry_transcription,
-            commands::set_groq_key
+            commands::set_groq_key,
+            commands::get_settings,
+            commands::set_settings,
+            commands::has_groq_key,
+            commands::test_groq_key,
+            commands::meridian_status,
+            commands::finish_wizard
         ])
         .setup(|app| {
             let config_dir = app.path().app_config_dir().expect("app config dir");
-            let s = settings::load(&config_dir.join("settings.json"));
+            let settings_path = config_dir.join("settings.json");
+            if !settings_path.exists() {
+                // First run: write the defaults template so the file always
+                // exists once the app has started.
+                let _ = settings::save(&settings_path, &settings::Settings::default());
+            }
+            let s = settings::load(&settings_path);
             let hotkey_name = Arc::new(RwLock::new(s.hotkey.clone()));
 
             let ctx = Arc::new(AppCtx {
@@ -40,6 +52,8 @@ pub fn run() {
                 partial_inflight: AtomicBool::new(false),
                 take_gen: AtomicU64::new(0),
                 app: app.handle().clone(),
+                hotkey_name: hotkey_name.clone(),
+                settings_path,
             });
             app.manage(ctx.clone());
 
