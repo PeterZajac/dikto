@@ -24,6 +24,7 @@ pub struct AppCtx {
     /// hotkey change hot-applies without restarting the listener thread.
     pub hotkey_name: Arc<RwLock<String>>,
     pub settings_path: PathBuf,
+    pub history: crate::history::HistoryStore,
 }
 
 pub(crate) fn apply(ctx: &AppCtx, ev: Event) -> Option<Phase> {
@@ -172,11 +173,12 @@ async fn finish(ctx: Arc<AppCtx>, gen: u64) {
         }
         return;
     }
+    let duration_ms = (samples.len() as i64 * 1000) / (rate as i64 * ch.max(1) as i64);
     let wav = audio::prepare_wav(&samples, rate, ch);
-    transcribe_and_deliver(ctx, wav, gen).await;
+    transcribe_and_deliver(ctx, wav, gen, duration_ms).await;
 }
 
-pub async fn transcribe_and_deliver(ctx: Arc<AppCtx>, wav: Vec<u8>, gen: u64) {
+pub async fn transcribe_and_deliver(ctx: Arc<AppCtx>, wav: Vec<u8>, gen: u64, duration_ms: i64) {
     let (groq_url, lang, cleanup_enabled, meridian_url, model, cleanup_style) = {
         let s = ctx.settings.read().unwrap();
         (
@@ -251,6 +253,12 @@ pub async fn transcribe_and_deliver(ctx: Arc<AppCtx>, wav: Vec<u8>, gen: u64) {
             .unwrap_or_else(|e| Err(crate::inject::InjectError::Keystroke(e.to_string())));
     match inject_result {
         Ok(()) => {
+            let _ = ctx.history.insert(
+                &transcript.text,
+                &final_text,
+                transcript.language.as_deref(),
+                duration_ms,
+            );
             if advance(&ctx, gen, Event::Injected, Some(note.unwrap_or("✓ vložené"))) {
                 hide_bubble_after(&ctx, 1200);
             }

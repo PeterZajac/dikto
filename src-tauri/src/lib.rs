@@ -1,6 +1,7 @@
 mod audio;
 mod cleanup;
 mod commands;
+mod history;
 mod hotkey;
 mod inject;
 mod pipeline;
@@ -31,7 +32,10 @@ pub fn run() {
             commands::has_groq_key,
             commands::test_groq_key,
             commands::meridian_status,
-            commands::finish_wizard
+            commands::finish_wizard,
+            commands::history_list,
+            commands::history_delete,
+            commands::history_clear
         ])
         .setup(|app| {
             let config_dir = app.path().app_config_dir().expect("app config dir");
@@ -44,6 +48,11 @@ pub fn run() {
             let s = settings::load(&settings_path);
             let hotkey_name = Arc::new(RwLock::new(s.hotkey.clone()));
 
+            let data_dir = app.path().app_data_dir().expect("app data dir");
+            std::fs::create_dir_all(&data_dir).expect("create app data dir");
+            let history = history::HistoryStore::open(&data_dir.join("history.sqlite"))
+                .expect("open history db");
+
             let ctx = Arc::new(AppCtx {
                 phase: Mutex::new(state::Phase::Idle),
                 recorder: audio::Recorder::new(),
@@ -54,6 +63,7 @@ pub fn run() {
                 app: app.handle().clone(),
                 hotkey_name: hotkey_name.clone(),
                 settings_path,
+                history,
             });
             app.manage(ctx.clone());
 

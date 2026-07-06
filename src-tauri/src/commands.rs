@@ -1,3 +1,4 @@
+use crate::history::Dictation;
 use crate::pipeline::{self, AppCtx};
 use crate::settings::{self, Settings};
 use crate::state::Event;
@@ -22,7 +23,7 @@ pub async fn retry_transcription(ctx: State<'_, Arc<AppCtx>>) -> Result<(), Stri
         pipeline::advance(&ctx, gen, Event::Failed, Some("žiadne audio na zopakovanie"));
         return Err("žiadne audio na zopakovanie".into());
     };
-    pipeline::transcribe_and_deliver(ctx.inner().clone(), wav, gen).await;
+    pipeline::transcribe_and_deliver(ctx.inner().clone(), wav, gen, 0).await;
     Ok(())
 }
 
@@ -84,4 +85,25 @@ pub fn finish_wizard(ctx: State<'_, Arc<AppCtx>>) -> Result<(), String> {
     let mut s = ctx.settings.write().unwrap();
     s.wizard_done = true;
     settings::save(&ctx.settings_path, &s).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn history_list(
+    ctx: State<'_, Arc<AppCtx>>,
+    search: Option<String>,
+    limit: Option<u32>,
+) -> Vec<Dictation> {
+    ctx.history
+        .list(search.as_deref(), limit.unwrap_or(200))
+        .unwrap_or_default()
+}
+
+#[tauri::command]
+pub fn history_delete(ctx: State<'_, Arc<AppCtx>>, id: i64) {
+    let _ = ctx.history.delete(id);
+}
+
+#[tauri::command]
+pub fn history_clear(ctx: State<'_, Arc<AppCtx>>) {
+    let _ = ctx.history.clear();
 }
