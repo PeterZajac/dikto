@@ -1,3 +1,4 @@
+mod audio;
 mod hotkey;
 mod settings;
 mod state;
