@@ -15,6 +15,9 @@ use tauri::Manager;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // Dev convenience: picks up GROQ_API_KEY from a repo-root .env
+    // (dotenv walks up from CWD; silently a no-op in bundled builds).
+    let _ = dotenvy::dotenv();
     let builder = tauri::Builder::default();
     #[cfg(target_os = "macos")]
     let builder = builder.plugin(tauri_nspanel::init());
