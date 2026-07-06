@@ -34,11 +34,15 @@ pub fn inject_text(text: &str) -> Result<(), InjectError> {
     #[cfg(not(target_os = "macos"))]
     let modifier = Key::Control;
 
-    // The modifier release must always be attempted, even if the 'v' click
-    // errors — otherwise a failed paste leaves Meta/Ctrl stuck down. The
-    // first error encountered still wins as the returned result.
+    // The modifier release must always be attempted, even if press or click
+    // errors — otherwise a failed paste leaves Meta/Ctrl stuck down. Skip
+    // click if press fails to avoid typing a bare 'v'. First error wins.
     let press_err = enigo.key(modifier, Direction::Press).err();
-    let click_err = enigo.key(Key::Unicode('v'), Direction::Click).err();
+    let click_err = if press_err.is_none() {
+        enigo.key(Key::Unicode('v'), Direction::Click).err()
+    } else {
+        None
+    };
     let release_err = enigo.key(modifier, Direction::Release).err();
     let result = match press_err.or(click_err).or(release_err) {
         Some(err) => Err(InjectError::Keystroke(err.to_string())),
