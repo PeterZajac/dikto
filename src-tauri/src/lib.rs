@@ -1,6 +1,7 @@
 mod audio;
 mod cleanup;
 mod hotkey;
+mod inject;
 mod settings;
 mod state;
 mod stt;
