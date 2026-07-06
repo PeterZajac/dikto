@@ -127,9 +127,19 @@ impl Recorder {
             }
         });
 
-        ready_rx
+        let result = ready_rx
             .recv()
-            .map_err(|_| "audio thread died".to_string())?
+            .map_err(|_| "audio thread died".to_string())
+            .and_then(|r| r);
+
+        if result.is_err() {
+            // Thread never confirmed the stream started (or died before sending) —
+            // clear state so a retry doesn't hit "already recording" forever.
+            self.stop_tx.lock().unwrap().take();
+            *self.meta.lock().unwrap() = None;
+        }
+
+        result
     }
 
     /// Copy of everything captured so far (used for live partials).
@@ -180,6 +190,28 @@ mod tests {
     fn resample_same_rate_is_identity() {
         let src = vec![0.1_f32, 0.2, 0.3];
         assert_eq!(resample_linear(&src, 16_000, 16_000), src);
+    }
+
+    #[test]
+    fn resample_downsample_exercises_zero_frac_interpolation() {
+        // ratio = 32000/16000 = 2.0, out_len = floor(4/2.0) = 2
+        // i=0: pos=0*2=0.0, idx=0, frac=0.0 -> a=0.0, b=1.0 -> 0.0+(1.0-0.0)*0.0 = 0.0
+        // i=1: pos=1*2=2.0, idx=2, frac=0.0 -> a=2.0, b=3.0 -> 2.0+(3.0-2.0)*0.0 = 2.0
+        let src = vec![0.0_f32, 1.0, 2.0, 3.0];
+        let out = resample_linear(&src, 32_000, 16_000);
+        assert_eq!(out, vec![0.0, 2.0]);
+    }
+
+    #[test]
+    fn resample_upsample_exercises_fractional_interpolation() {
+        // ratio = 16000/32000 = 0.5, out_len = floor(2/0.5) = 4
+        // i=0: pos=0*0.5=0.0, idx=0, frac=0.0 -> a=0.0, b=1.0 -> 0.0+(1.0-0.0)*0.0 = 0.0
+        // i=1: pos=1*0.5=0.5, idx=0, frac=0.5 -> a=0.0, b=1.0 -> 0.0+(1.0-0.0)*0.5 = 0.5
+        // i=2: pos=2*0.5=1.0, idx=1, frac=0.0 -> a=1.0, b=mono.get(2) missing -> b=a=1.0 -> 1.0
+        // i=3: pos=3*0.5=1.5, idx=1, frac=0.5 -> a=1.0, b=a=1.0 -> 1.0+(1.0-1.0)*0.5 = 1.0
+        let src = vec![0.0_f32, 1.0];
+        let out = resample_linear(&src, 16_000, 32_000);
+        assert_eq!(out, vec![0.0, 0.5, 1.0, 1.0]);
     }
 
     #[test]
