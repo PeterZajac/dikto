@@ -1,4 +1,5 @@
 mod audio;
+mod cleanup;
 mod hotkey;
 mod settings;
 mod state;
