@@ -9,6 +9,9 @@ export type Phase =
 export const EVENT_STATE = "dictation:state";
 export const EVENT_AMPLITUDE = "dictation:amplitude";
 export const EVENT_PARTIAL = "dictation:partial";
+export const EVENT_PIPELINE_DEAD = "dictation:pipeline-dead";
+export const EVENT_SETTINGS_CHANGED = "settings:changed";
+export const EVENT_HOTKEY_CAPTURED = "hotkey:captured";
 
 export interface StatePayload {
   phase: Phase;
@@ -19,4 +22,10 @@ export interface AmplitudePayload {
 }
 export interface PartialPayload {
   text: string;
+}
+export interface PipelineDeadPayload {
+  message: string;
+}
+export interface HotkeyCapturedPayload {
+  key: string;
 }
