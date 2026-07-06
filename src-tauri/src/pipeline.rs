@@ -25,6 +25,9 @@ pub struct AppCtx {
     pub hotkey_name: Arc<RwLock<String>>,
     pub settings_path: PathBuf,
     pub history: crate::history::HistoryStore,
+    /// Shared with hotkey::spawn's listener thread — set true to divert the
+    /// next KeyPress into a `hotkey:captured` event instead of interpreting it.
+    pub capture_next: Arc<AtomicBool>,
 }
 
 /// Applies an event raised by async work belonging to a specific take. If

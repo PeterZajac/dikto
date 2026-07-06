@@ -22,6 +22,10 @@ pub fn run() {
     let builder = tauri::Builder::default();
     #[cfg(target_os = "macos")]
     let builder = builder.plugin(tauri_nspanel::init());
+    let builder = builder.plugin(tauri_plugin_autostart::init(
+        tauri_plugin_autostart::MacosLauncher::LaunchAgent,
+        None,
+    ));
     builder
         .invoke_handler(tauri::generate_handler![
             commands::cancel_dictation,
@@ -37,7 +41,8 @@ pub fn run() {
             commands::history_delete,
             commands::history_clear,
             commands::permissions_status,
-            commands::open_privacy_settings
+            commands::open_privacy_settings,
+            commands::hotkey_capture_start
         ])
         .setup(|app| {
             let config_dir = app.path().app_config_dir().expect("app config dir");
@@ -55,6 +60,8 @@ pub fn run() {
             let history = history::HistoryStore::open(&data_dir.join("history.sqlite"))
                 .expect("open history db");
 
+            let capture_next = Arc::new(AtomicBool::new(false));
+
             let ctx = Arc::new(AppCtx {
                 phase: Mutex::new(state::Phase::Idle),
                 recorder: audio::Recorder::new(),
@@ -66,6 +73,7 @@ pub fn run() {
                 hotkey_name: hotkey_name.clone(),
                 settings_path,
                 history,
+                capture_next: capture_next.clone(),
             });
             app.manage(ctx.clone());
 
@@ -91,15 +99,20 @@ pub fn run() {
 
             let (tx, rx) = mpsc::channel::<hotkey::HotkeySignal>();
             let dead_app = app.handle().clone();
+            let captured_app = app.handle().clone();
             hotkey::spawn(
                 hotkey_name,
                 tx,
+                capture_next,
                 Box::new(move |message: String| {
                     let _ = dead_app.emit("dictation:pipeline-dead", serde_json::json!({ "message": message }));
                     if let Some(win) = dead_app.get_webview_window("main") {
                         let _ = win.show();
                         let _ = win.set_focus();
                     }
+                }),
+                Box::new(move |key: String| {
+                    let _ = captured_app.emit("hotkey:captured", serde_json::json!({ "key": key }));
                 }),
             );
             std::thread::spawn(move || {

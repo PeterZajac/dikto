@@ -2,6 +2,7 @@ use crate::history::Dictation;
 use crate::pipeline::{self, AppCtx};
 use crate::settings::{self, Settings};
 use crate::state::Event;
+use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use tauri::{Emitter, State};
 
@@ -45,6 +46,15 @@ pub fn set_settings(ctx: State<'_, Arc<AppCtx>>, new: Settings) -> Result<(), St
     *ctx.settings.write().unwrap() = new.clone();
     let _ = ctx.app.emit("settings:changed", &new);
     Ok(())
+}
+
+/// Arms (or, with `cancel: true`, disarms) the one-shot hotkey-capture flag
+/// consumed by the rdev listener thread (see `hotkey::spawn`). Settings calls
+/// this with `cancel: true` when its 10s capture-UI timeout elapses, so a
+/// keypress after the user has given up isn't still swallowed as a capture.
+#[tauri::command]
+pub fn hotkey_capture_start(ctx: State<'_, Arc<AppCtx>>, cancel: bool) {
+    ctx.capture_next.store(!cancel, Ordering::SeqCst);
 }
 
 #[tauri::command]

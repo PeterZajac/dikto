@@ -1,3 +1,4 @@
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
 use std::sync::{Arc, RwLock};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -95,10 +96,15 @@ pub fn now_ms() -> u128 {
 /// Spawns the global rdev listener + tick thread. Never returns handles —
 /// both threads live for the app's lifetime. `on_dead` fires (once) if the
 /// rdev listener fails to start, e.g. missing Accessibility permission.
+/// `capture_next` is a one-shot flag: while true, the next KeyPress of ANY
+/// key is diverted to `on_captured` (Settings' "Zmeniť" hotkey flow) instead
+/// of being interpreted as the configured hotkey.
 pub fn spawn(
     hotkey: Arc<RwLock<String>>,
     tx: mpsc::Sender<HotkeySignal>,
+    capture_next: Arc<AtomicBool>,
     on_dead: Box<dyn Fn(String) + Send>,
+    on_captured: Box<dyn Fn(String) + Send>,
 ) {
     let interp = Arc::new(std::sync::Mutex::new(Interpreter::new()));
 
@@ -112,24 +118,40 @@ pub fn spawn(
                 Action::Stop => { let _ = tx.send(HotkeySignal::Stop); }
                 Action::None => {}
             };
+            // Set once a capture-mode KeyPress is swallowed, so its matching
+            // KeyRelease is swallowed too — otherwise that release could be
+            // misread as a key-up of the (still) configured hotkey.
+            let mut swallow_release = false;
             let result = rdev::listen(move |ev| {
                 let key_name = match ev.event_type {
                     rdev::EventType::KeyPress(k) => Some((format!("{k:?}"), true)),
                     rdev::EventType::KeyRelease(k) => Some((format!("{k:?}"), false)),
                     _ => None,
                 };
-                if let Some((name, is_down)) = key_name {
-                    let target = hotkey.read().unwrap().clone();
-                    if name == target {
-                        let t = now_ms();
-                        let mut i = interp.lock().unwrap();
-                        let a = if is_down { i.key_down(t) } else { i.key_up(t) };
-                        send(a);
-                    } else if name == "Escape" && is_down {
-                        // Only reached when Escape isn't itself the configured
-                        // hotkey; pipeline ignores Cancel while Idle.
-                        let _ = tx_esc.send(HotkeySignal::Cancel);
+                let Some((name, is_down)) = key_name else { return };
+
+                if is_down && capture_next.swap(false, Ordering::SeqCst) {
+                    swallow_release = true;
+                    if name != "Escape" {
+                        on_captured(name);
                     }
+                    return;
+                }
+                if !is_down && swallow_release {
+                    swallow_release = false;
+                    return;
+                }
+
+                let target = hotkey.read().unwrap().clone();
+                if name == target {
+                    let t = now_ms();
+                    let mut i = interp.lock().unwrap();
+                    let a = if is_down { i.key_down(t) } else { i.key_up(t) };
+                    send(a);
+                } else if name == "Escape" && is_down {
+                    // Only reached when Escape isn't itself the configured
+                    // hotkey; pipeline ignores Cancel while Idle.
+                    let _ = tx_esc.send(HotkeySignal::Cancel);
                 }
             });
             if let Err(e) = result {

@@ -19,6 +19,8 @@
     "allow-history-delete",
     "allow-history-clear",
     "allow-permissions-status",
-    "allow-open-privacy-settings"
+    "allow-open-privacy-settings",
+    "allow-hotkey-capture-start",
+    "autostart:default"
   ]
 }

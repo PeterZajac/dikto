@@ -48,9 +48,9 @@ export const api = {
   historyClear: () => invoke<void>("history_clear"),
   permissionsStatus: () => invoke<PermissionsStatus>("permissions_status"),
   openPrivacySettings: (pane: PrivacyPane) => invoke<void>("open_privacy_settings", { pane }),
-  // Rust command lands with Task 6 (hotkey capture); wrapper forward-declared
-  // here so call sites can be written against a stable, single API surface.
-  hotkeyCaptureStart: () => invoke<void>("hotkey_capture_start"),
+  // cancel: true disarms the capture flag without a keypress (used by the
+  // Settings UI's 10s capture-mode timeout).
+  hotkeyCaptureStart: (cancel = false) => invoke<void>("hotkey_capture_start", { cancel }),
   finishWizard: () => invoke<void>("finish_wizard"),
   cancelDictation: () => invoke<void>("cancel_dictation"),
   retryTranscription: () => invoke<void>("retry_transcription"),
