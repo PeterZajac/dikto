@@ -1,0 +1,74 @@
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  background: transparent;
+  height: 100%;
+  overflow: hidden;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  user-select: none;
+  -webkit-user-select: none;
+  cursor: default;
+}
+
+.bubble {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: 48px;
+  margin: 8px;
+  padding: 0 16px;
+  border-radius: 24px;
+  background: rgba(24, 24, 27, 0.78);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  color: rgba(255, 255, 255, 0.92);
+  font-size: 13px;
+  overflow: hidden;
+  white-space: nowrap;
+}
+
+.bubble--error {
+  border-color: rgba(248, 113, 113, 0.5);
+}
+
+.waveform {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  height: 26px;
+  flex-shrink: 0;
+}
+
+.waveform__bar {
+  width: 3px;
+  border-radius: 2px;
+  background: rgba(255, 255, 255, 0.85);
+  transition: height 90ms linear;
+}
+
+.bubble__timer {
+  color: rgba(255, 255, 255, 0.6);
+  font-variant-numeric: tabular-nums;
+}
+
+.bubble__partial {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  direction: rtl; /* keep the newest words visible */
+  text-align: left;
+}
+
+.bubble__status--done {
+  color: #4ade80;
+}
+
+.bubble__status--error {
+  color: #f87171;
+}

@@ -34,6 +34,7 @@ fn apply(ctx: &AppCtx, ev: Event) -> Option<Phase> {
 
 fn show_bubble(ctx: &AppCtx) {
     if let Some(w) = ctx.app.get_webview_window("bubble") {
+        crate::position_bubble(&w);
         let _ = w.show();
     }
 }
