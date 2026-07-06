@@ -8,6 +8,17 @@
     "core:window:allow-start-dragging",
     "allow-cancel-dictation",
     "allow-retry-transcription",
-    "allow-set-groq-key"
+    "allow-set-groq-key",
+    "allow-get-settings",
+    "allow-set-settings",
+    "allow-has-groq-key",
+    "allow-test-groq-key",
+    "allow-meridian-status",
+    "allow-finish-wizard",
+    "allow-history-list",
+    "allow-history-delete",
+    "allow-history-clear",
+    "allow-permissions-status",
+    "allow-open-privacy-settings"
   ]
 }

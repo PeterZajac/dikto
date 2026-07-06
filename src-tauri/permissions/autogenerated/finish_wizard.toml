@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-finish-wizard"
+description = "Enables the finish_wizard command without any pre-configured scope."
+commands.allow = ["finish_wizard"]
+
+[[permission]]
+identifier = "deny-finish-wizard"
+description = "Denies the finish_wizard command without any pre-configured scope."
+commands.deny = ["finish_wizard"]

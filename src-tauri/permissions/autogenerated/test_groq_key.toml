@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-test-groq-key"
+description = "Enables the test_groq_key command without any pre-configured scope."
+commands.allow = ["test_groq_key"]
+
+[[permission]]
+identifier = "deny-test-groq-key"
+description = "Denies the test_groq_key command without any pre-configured scope."
+commands.deny = ["test_groq_key"]

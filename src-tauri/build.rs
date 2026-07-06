@@ -4,6 +4,17 @@ fn main() {
             "cancel_dictation",
             "retry_transcription",
             "set_groq_key",
+            "get_settings",
+            "set_settings",
+            "has_groq_key",
+            "test_groq_key",
+            "meridian_status",
+            "finish_wizard",
+            "history_list",
+            "history_delete",
+            "history_clear",
+            "permissions_status",
+            "open_privacy_settings",
         ])),
     )
     .expect("failed to run tauri-build");

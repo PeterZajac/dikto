@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-meridian-status"
+description = "Enables the meridian_status command without any pre-configured scope."
+commands.allow = ["meridian_status"]
+
+[[permission]]
+identifier = "deny-meridian-status"
+description = "Denies the meridian_status command without any pre-configured scope."
+commands.deny = ["meridian_status"]
