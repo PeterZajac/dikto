@@ -1,3 +1,4 @@
+mod hotkey;
 mod settings;
 mod state;
 
