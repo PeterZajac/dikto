@@ -96,8 +96,8 @@ impl CleanupClient {
         Ok(text)
     }
 
-    /// Cheap reachability probe used for the settings UI later (Plan 2)
-    /// and by the pipeline to decide whether to even attempt cleanup.
+    /// Cheap reachability probe reserved for the Plan 2 settings UI;
+    /// the pipeline does not call this today.
     pub async fn is_reachable(&self) -> bool {
         self.http.get(&self.base_url).send().await.is_ok()
     }

@@ -23,7 +23,13 @@ export default function Bubble() {
   const [partial, setPartial] = useState("");
   const [bars, setBars] = useState<number[]>(Array(BAR_COUNT).fill(0));
   const [seconds, setSeconds] = useState(0);
+  const [retrying, setRetrying] = useState(false);
   const timerRef = useRef<number | null>(null);
+
+  const handleRetry = () => {
+    setRetrying(true);
+    retry();
+  };
 
   useEffect(() => {
     let cancelled = false;
@@ -37,6 +43,7 @@ export default function Bubble() {
       listen<StatePayload>(EVENT_STATE, (e) => {
         setPhase(e.payload.phase);
         setMessage(e.payload.message);
+        setRetrying(false);
         if (e.payload.phase === "recording") {
           setPartial("");
           setSeconds(0);
@@ -97,7 +104,7 @@ export default function Bubble() {
         <>
           <span className="bubble__status bubble__status--error">⚠ {message}</span>
           {message?.startsWith("prepis zlyhal") && (
-            <button className="bubble__retry" onClick={retry}>
+            <button className="bubble__retry" onClick={handleRetry} disabled={retrying}>
               skúsiť znova
             </button>
           )}
