@@ -29,7 +29,7 @@ pub fn set_phase(ctx: &AppCtx, phase: Phase, message: Option<&str>) {
     );
 }
 
-fn apply(ctx: &AppCtx, ev: Event) -> Option<Phase> {
+pub(crate) fn apply(ctx: &AppCtx, ev: Event) -> Option<Phase> {
     let mut guard = ctx.phase.lock().unwrap();
     let next = transition(*guard, ev)?;
     *guard = next;
@@ -44,6 +44,26 @@ fn apply_for(ctx: &AppCtx, gen: u64, ev: Event) -> Option<Phase> {
         return None;
     }
     apply(ctx, ev)
+}
+
+/// Atomically: check the take is current, apply the transition, write the
+/// phase, then emit. Returns false when the event was dropped (stale take
+/// or illegal transition).
+fn advance(ctx: &AppCtx, gen: u64, ev: Event, message: Option<&str>) -> bool {
+    let next = {
+        let mut guard = ctx.phase.lock().unwrap();
+        if ctx.take_gen.load(Ordering::SeqCst) != gen {
+            return false;
+        }
+        let Some(next) = transition(*guard, ev) else { return false };
+        *guard = next;
+        next
+    };
+    let _ = ctx.app.emit(
+        "dictation:state",
+        serde_json::json!({ "phase": next, "message": message }),
+    );
+    true
 }
 
 fn show_bubble(ctx: &AppCtx) {
@@ -72,8 +92,12 @@ pub fn handle_signal(ctx: Arc<AppCtx>, sig: HotkeySignal) {
         HotkeySignal::Stop => {
             if apply(&ctx, Event::StopRequested).is_some() {
                 set_phase(&ctx, Phase::Transcribing, None);
-                // Same thread that runs start_recording/cancel, so this read
-                // can't race with a gen bump — it's the take we're stopping.
+                // take_gen is atomic and re-checked under the phase lock by
+                // advance() before every take-scoped transition, so a
+                // concurrent cross-thread cancel (cancel_dictation runs on
+                // its own thread) can't corrupt this read — at worst the
+                // gen is stale and finish() sees recorder.stop() return
+                // None, which self-heals via the Cancel event.
                 let gen = ctx.take_gen.load(Ordering::SeqCst);
                 let ctx2 = ctx.clone();
                 tauri::async_runtime::spawn(async move { finish(ctx2, gen).await });
@@ -128,15 +152,12 @@ async fn finish(ctx: Arc<AppCtx>, gen: u64) {
     let Some((samples, rate, ch)) = ctx.recorder.stop() else {
         // Recorder was already stopped (e.g. a concurrent cancel) — only
         // move to Idle if we're still the take that owns the phase.
-        if apply_for(&ctx, gen, Event::Cancel).is_some() {
-            set_phase(&ctx, Phase::Idle, None);
-        }
+        advance(&ctx, gen, Event::Cancel, None);
         return;
     };
     // < 0.4 s of audio → treat as silence.
     if samples.len() < (rate as usize * ch as usize) * 2 / 5 {
-        if apply_for(&ctx, gen, Event::Cancel).is_some() {
-            set_phase(&ctx, Phase::Idle, Some("nič som nepočul"));
+        if advance(&ctx, gen, Event::Cancel, Some("nič som nepočul")) {
             hide_bubble_after(&ctx, 1200);
         }
         return;
@@ -162,9 +183,7 @@ pub async fn transcribe_and_deliver(ctx: Arc<AppCtx>, wav: Vec<u8>, gen: u64) {
         if ctx.take_gen.load(Ordering::SeqCst) == gen {
             *ctx.pending_wav.lock().unwrap() = Some(wav);
         }
-        if apply_for(&ctx, gen, Event::Failed).is_some() {
-            set_phase(&ctx, Phase::Error, Some("chýba Groq API kľúč"));
-        }
+        advance(&ctx, gen, Event::Failed, Some("chýba Groq API kľúč"));
         return;
     };
 
@@ -176,27 +195,23 @@ pub async fn transcribe_and_deliver(ctx: Arc<AppCtx>, wav: Vec<u8>, gen: u64) {
             if ctx.take_gen.load(Ordering::SeqCst) == gen {
                 *ctx.pending_wav.lock().unwrap() = Some(wav);
             }
-            if apply_for(&ctx, gen, Event::Failed).is_some() {
-                set_phase(&ctx, Phase::Error, Some(&format!("prepis zlyhal: {e}")));
-            }
+            advance(&ctx, gen, Event::Failed, Some(&format!("prepis zlyhal: {e}")));
             return;
         }
     };
     if transcript.text.is_empty() {
-        if apply_for(&ctx, gen, Event::Cancel).is_some() {
-            set_phase(&ctx, Phase::Idle, Some("nič som nepočul"));
+        if advance(&ctx, gen, Event::Cancel, Some("nič som nepočul")) {
             hide_bubble_after(&ctx, 1200);
         }
         return;
-    }
-    if apply_for(&ctx, gen, Event::TranscriptReady).is_none() {
-        return; // cancelled meanwhile, or a stale take
     }
 
     // 2. Cleanup (best-effort — spec: never lose text)
     let mut note: Option<&str> = None;
     let final_text = if cleanup_enabled {
-        set_phase(&ctx, Phase::Cleaning, Some("✨ upravujem text…"));
+        if !advance(&ctx, gen, Event::TranscriptReady, Some("✨ upravujem text…")) {
+            return; // cancelled meanwhile, or a stale take
+        }
         match CleanupClient::new(meridian_url, model).clean(&transcript.text).await {
             Ok(cleaned) => cleaned,
             Err(_) => {
@@ -205,14 +220,16 @@ pub async fn transcribe_and_deliver(ctx: Arc<AppCtx>, wav: Vec<u8>, gen: u64) {
             }
         }
     } else {
+        if apply_for(&ctx, gen, Event::TranscriptReady).is_none() {
+            return; // cancelled meanwhile, or a stale take
+        }
         transcript.text.clone()
     };
-    if apply_for(&ctx, gen, Event::CleanupDone).is_none() {
+    if !advance(&ctx, gen, Event::CleanupDone, None) {
         return; // cancelled meanwhile, or a stale take
     }
 
     // 3. Inject
-    set_phase(&ctx, Phase::Injecting, None);
     let text_for_inject = final_text.clone();
     let inject_result =
         tauri::async_runtime::spawn_blocking(move || crate::inject::inject_text(&text_for_inject))
@@ -220,8 +237,7 @@ pub async fn transcribe_and_deliver(ctx: Arc<AppCtx>, wav: Vec<u8>, gen: u64) {
             .unwrap_or_else(|e| Err(crate::inject::InjectError::Keystroke(e.to_string())));
     match inject_result {
         Ok(()) => {
-            if apply_for(&ctx, gen, Event::Injected).is_some() {
-                set_phase(&ctx, Phase::Idle, Some(note.unwrap_or("✓ vložené")));
+            if advance(&ctx, gen, Event::Injected, Some(note.unwrap_or("✓ vložené"))) {
                 hide_bubble_after(&ctx, 1200);
             }
         }
@@ -229,13 +245,12 @@ pub async fn transcribe_and_deliver(ctx: Arc<AppCtx>, wav: Vec<u8>, gen: u64) {
             // Never lose text: leave it in the clipboard at minimum,
             // regardless of whether this take is still the active one.
             let _ = crate::inject::copy_only(&final_text);
-            if apply_for(&ctx, gen, Event::Failed).is_some() {
-                set_phase(
-                    &ctx,
-                    Phase::Error,
-                    Some(&format!("vloženie zlyhalo — text je v schránke (Cmd+V). {e}")),
-                );
-            }
+            advance(
+                &ctx,
+                gen,
+                Event::Failed,
+                Some(&format!("vloženie zlyhalo — text je v schránke (Cmd+V). {e}")),
+            );
         }
     }
 }

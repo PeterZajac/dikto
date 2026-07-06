@@ -20,6 +20,7 @@ pub enum Event {
     CleanupDone,
     Injected,
     Failed,
+    RetryRequested,
 }
 
 /// Returns the next phase, or None when the event is illegal in this phase
@@ -39,6 +40,7 @@ pub fn transition(p: Phase, e: Event) -> Option<Phase> {
         (Injecting, Injected) => Some(Idle),
         (_, Failed) => Some(Error),
         (Error, Cancel) => Some(Idle),
+        (Error, RetryRequested) => Some(Transcribing),
         _ => None,
     }
 }
@@ -81,6 +83,17 @@ mod tests {
     #[test]
     fn error_can_restart() {
         assert_eq!(transition(Error, StartRequested), Some(Recording));
+    }
+
+    #[test]
+    fn retry_legal_from_error() {
+        assert_eq!(transition(Error, RetryRequested), Some(Transcribing));
+    }
+
+    #[test]
+    fn retry_illegal_outside_error() {
+        assert_eq!(transition(Idle, RetryRequested), None);
+        assert_eq!(transition(Recording, RetryRequested), None);
     }
 
     #[test]
