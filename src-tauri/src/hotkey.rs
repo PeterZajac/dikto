@@ -101,6 +101,7 @@ pub fn spawn(hotkey: Arc<RwLock<String>>, tx: mpsc::Sender<HotkeySignal>) {
         let interp = interp.clone();
         let tx = tx.clone();
         std::thread::spawn(move || {
+            let tx_esc = tx.clone();
             let send = move |a: Action| match a {
                 Action::Start => { let _ = tx.send(HotkeySignal::Start); }
                 Action::Stop => { let _ = tx.send(HotkeySignal::Stop); }
@@ -113,17 +114,16 @@ pub fn spawn(hotkey: Arc<RwLock<String>>, tx: mpsc::Sender<HotkeySignal>) {
                     _ => None,
                 };
                 if let Some((name, is_down)) = key_name {
-                    if name == "Escape" && is_down {
-                        // Cancel handled unconditionally; pipeline ignores it when Idle.
-                        // (send() above only covers Start/Stop)
-                        return;
-                    }
                     let target = hotkey.read().unwrap().clone();
                     if name == target {
                         let t = now_ms();
                         let mut i = interp.lock().unwrap();
                         let a = if is_down { i.key_down(t) } else { i.key_up(t) };
                         send(a);
+                    } else if name == "Escape" && is_down {
+                        // Only reached when Escape isn't itself the configured
+                        // hotkey; pipeline ignores Cancel while Idle.
+                        let _ = tx_esc.send(HotkeySignal::Cancel);
                     }
                 }
             });

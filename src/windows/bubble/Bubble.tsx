@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import {
   AmplitudePayload,
@@ -12,6 +13,9 @@ import {
 import "./bubble.css";
 
 const BAR_COUNT = 24;
+
+const cancel = () => void invoke("cancel_dictation");
+const retry = () => void invoke("retry_transcription");
 
 export default function Bubble() {
   const [phase, setPhase] = useState<Phase>("idle");
@@ -72,14 +76,14 @@ export default function Bubble() {
   return (
     <div className={`bubble bubble--${phase}`} data-tauri-drag-region>
       {phase === "recording" && (
-        <>
+        <button className="bubble__hit" onClick={cancel} title="Zrušiť (Esc)">
           <Waveform bars={bars} />
           {partial ? (
             <span className="bubble__partial">{partial}</span>
           ) : (
             <span className="bubble__timer">● {mmss}</span>
           )}
-        </>
+        </button>
       )}
       {phase === "transcribing" && <span className="bubble__status">prepisujem…</span>}
       {phase === "cleaning" && (
@@ -90,7 +94,17 @@ export default function Bubble() {
         <span className="bubble__status bubble__status--done">{message}</span>
       )}
       {phase === "error" && (
-        <span className="bubble__status bubble__status--error">⚠ {message}</span>
+        <>
+          <span className="bubble__status bubble__status--error">⚠ {message}</span>
+          {message?.startsWith("prepis zlyhal") && (
+            <button className="bubble__retry" onClick={retry}>
+              skúsiť znova
+            </button>
+          )}
+          <button className="bubble__retry" onClick={cancel}>
+            ✕
+          </button>
+        </>
       )}
     </div>
   );

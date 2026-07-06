@@ -6,6 +6,9 @@
   "permissions": [
     "core:default",
     "opener:default",
-    "core:window:allow-start-dragging"
+    "core:window:allow-start-dragging",
+    "allow-cancel-dictation",
+    "allow-retry-transcription",
+    "allow-set-groq-key"
   ]
 }

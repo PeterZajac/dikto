@@ -72,3 +72,25 @@ body,
 .bubble__status--error {
   color: #f87171;
 }
+
+.bubble__hit {
+  all: unset;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.bubble__retry {
+  all: unset;
+  cursor: pointer;
+  padding: 4px 10px;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.12);
+  font-size: 12px;
+  flex-shrink: 0;
+}
+
+.bubble__retry:hover {
+  background: rgba(255, 255, 255, 0.22);
+}

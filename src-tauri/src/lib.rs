@@ -1,5 +1,6 @@
 mod audio;
 mod cleanup;
+mod commands;
 mod hotkey;
 mod inject;
 mod pipeline;
@@ -8,7 +9,7 @@ mod state;
 mod stt;
 
 use pipeline::AppCtx;
-use std::sync::atomic::AtomicBool;
+use std::sync::atomic::{AtomicBool, AtomicU64};
 use std::sync::{mpsc, Arc, Mutex, RwLock};
 use tauri::Manager;
 
@@ -18,6 +19,11 @@ pub fn run() {
     #[cfg(target_os = "macos")]
     let builder = builder.plugin(tauri_nspanel::init());
     builder
+        .invoke_handler(tauri::generate_handler![
+            commands::cancel_dictation,
+            commands::retry_transcription,
+            commands::set_groq_key
+        ])
         .setup(|app| {
             let config_dir = app.path().app_config_dir().expect("app config dir");
             let s = settings::load(&config_dir.join("settings.json"));
@@ -29,6 +35,7 @@ pub fn run() {
                 settings: RwLock::new(s),
                 pending_wav: Mutex::new(None),
                 partial_inflight: AtomicBool::new(false),
+                take_gen: AtomicU64::new(0),
                 app: app.handle().clone(),
             });
             app.manage(ctx.clone());
