@@ -49,7 +49,7 @@ fn apply_for(ctx: &AppCtx, gen: u64, ev: Event) -> Option<Phase> {
 /// Atomically: check the take is current, apply the transition, write the
 /// phase, then emit. Returns false when the event was dropped (stale take
 /// or illegal transition).
-fn advance(ctx: &AppCtx, gen: u64, ev: Event, message: Option<&str>) -> bool {
+pub(crate) fn advance(ctx: &AppCtx, gen: u64, ev: Event, message: Option<&str>) -> bool {
     let next = {
         let mut guard = ctx.phase.lock().unwrap();
         if ctx.take_gen.load(Ordering::SeqCst) != gen {

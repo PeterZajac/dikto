@@ -1,6 +1,6 @@
 use crate::pipeline::{self, AppCtx};
 use crate::settings;
-use crate::state::{Event, Phase};
+use crate::state::Event;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use tauri::State;
@@ -13,21 +13,18 @@ pub fn cancel_dictation(ctx: State<'_, Arc<AppCtx>>) {
 /// Re-runs STT on the audio kept from a failed attempt (spec §6: "skúsiť znova").
 #[tauri::command]
 pub async fn retry_transcription(ctx: State<'_, Arc<AppCtx>>) -> Result<(), String> {
-    // Go through the FSM first — retry is only legal from Error — before
-    // touching gen or pending_wav, so an illegal call can't disturb either.
-    if pipeline::apply(&ctx, Event::RetryRequested).is_none() {
+    // Bump gen before the transition so a concurrent start/cancel racing us
+    // bumps it again too — our advance() calls then just no-op instead of
+    // clobbering whatever phase the FSM has since moved to.
+    let gen = ctx.take_gen.fetch_add(1, Ordering::SeqCst) + 1;
+    if !pipeline::advance(&ctx, gen, Event::RetryRequested, None) {
         return Err("retry nie je možný teraz".into());
     }
-    // Treat the retry as a fresh take so a stale FSM event from the
-    // original failed attempt can no longer touch it.
-    let gen = ctx.take_gen.fetch_add(1, Ordering::SeqCst) + 1;
     let wav = ctx.pending_wav.lock().unwrap().take();
     let Some(wav) = wav else {
-        // No audio to retry after all — put the FSM back where it was.
-        pipeline::apply(&ctx, Event::Failed);
+        pipeline::advance(&ctx, gen, Event::Failed, Some("žiadne audio na zopakovanie"));
         return Err("žiadne audio na zopakovanie".into());
     };
-    pipeline::set_phase(&ctx, Phase::Transcribing, None);
     pipeline::transcribe_and_deliver(ctx.inner().clone(), wav, gen).await;
     Ok(())
 }
