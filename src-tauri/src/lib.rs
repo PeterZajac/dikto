@@ -2,6 +2,7 @@ mod audio;
 mod hotkey;
 mod settings;
 mod state;
+mod stt;
 
 // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
 #[tauri::command]
