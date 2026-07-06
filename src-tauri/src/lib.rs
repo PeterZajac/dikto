@@ -12,7 +12,7 @@ mod stt;
 use pipeline::AppCtx;
 use std::sync::atomic::{AtomicBool, AtomicU64};
 use std::sync::{mpsc, Arc, Mutex, RwLock};
-use tauri::Manager;
+use tauri::{Emitter, Manager};
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -35,7 +35,9 @@ pub fn run() {
             commands::finish_wizard,
             commands::history_list,
             commands::history_delete,
-            commands::history_clear
+            commands::history_clear,
+            commands::permissions_status,
+            commands::open_privacy_settings
         ])
         .setup(|app| {
             let config_dir = app.path().app_config_dir().expect("app config dir");
@@ -88,7 +90,18 @@ pub fn run() {
             }
 
             let (tx, rx) = mpsc::channel::<hotkey::HotkeySignal>();
-            hotkey::spawn(hotkey_name, tx);
+            let dead_app = app.handle().clone();
+            hotkey::spawn(
+                hotkey_name,
+                tx,
+                Box::new(move |message: String| {
+                    let _ = dead_app.emit("dictation:pipeline-dead", serde_json::json!({ "message": message }));
+                    if let Some(win) = dead_app.get_webview_window("main") {
+                        let _ = win.show();
+                        let _ = win.set_focus();
+                    }
+                }),
+            );
             std::thread::spawn(move || {
                 while let Ok(sig) = rx.recv() {
                     pipeline::handle_signal(ctx.clone(), sig);

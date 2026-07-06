@@ -93,8 +93,13 @@ pub fn now_ms() -> u128 {
 }
 
 /// Spawns the global rdev listener + tick thread. Never returns handles —
-/// both threads live for the app's lifetime.
-pub fn spawn(hotkey: Arc<RwLock<String>>, tx: mpsc::Sender<HotkeySignal>) {
+/// both threads live for the app's lifetime. `on_dead` fires (once) if the
+/// rdev listener fails to start, e.g. missing Accessibility permission.
+pub fn spawn(
+    hotkey: Arc<RwLock<String>>,
+    tx: mpsc::Sender<HotkeySignal>,
+    on_dead: Box<dyn Fn(String) + Send>,
+) {
     let interp = Arc::new(std::sync::Mutex::new(Interpreter::new()));
 
     {
@@ -129,6 +134,11 @@ pub fn spawn(hotkey: Arc<RwLock<String>>, tx: mpsc::Sender<HotkeySignal>) {
             });
             if let Err(e) = result {
                 eprintln!("hotkey listener failed: {e:?} (missing Accessibility permission?)");
+                on_dead(
+                    "Globálna klávesa nefunguje — chýba povolenie Accessibility. \
+                     Otvor Nastavenia → Súkromie a bezpečnosť → Prístupnosť."
+                        .to_string(),
+                );
             }
         });
     }

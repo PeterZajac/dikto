@@ -107,3 +107,28 @@ pub fn history_delete(ctx: State<'_, Arc<AppCtx>>, id: i64) {
 pub fn history_clear(ctx: State<'_, Arc<AppCtx>>) {
     let _ = ctx.history.clear();
 }
+
+#[tauri::command]
+pub fn permissions_status() -> serde_json::Value {
+    #[cfg(target_os = "macos")]
+    let accessibility = macos_accessibility_client::accessibility::application_is_trusted();
+    #[cfg(not(target_os = "macos"))]
+    let accessibility = true;
+    serde_json::json!({ "accessibility": accessibility })
+}
+
+/// `pane`: "accessibility" | "microphone".
+#[tauri::command]
+pub fn open_privacy_settings(pane: String) {
+    #[cfg(target_os = "macos")]
+    {
+        let anchor = if pane == "microphone" { "Privacy_Microphone" } else { "Privacy_Accessibility" };
+        let _ = std::process::Command::new("open")
+            .arg(format!("x-apple.systempreferences:com.apple.preference.security?{anchor}"))
+            .spawn();
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = pane;
+    }
+}
