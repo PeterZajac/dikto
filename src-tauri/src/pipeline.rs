@@ -27,21 +27,18 @@ pub struct AppCtx {
     pub history: crate::history::HistoryStore,
 }
 
-pub(crate) fn apply(ctx: &AppCtx, ev: Event) -> Option<Phase> {
-    let mut guard = ctx.phase.lock().unwrap();
-    let next = transition(*guard, ev)?;
-    *guard = next;
-    Some(next)
-}
-
-/// Same as `apply`, but for events raised by async work belonging to a
-/// specific take. If the take has since been cancelled/superseded (its
-/// generation no longer matches), the event is dropped instead of applied.
+/// Applies an event raised by async work belonging to a specific take. If
+/// the take has since been cancelled/superseded (its generation no longer
+/// matches), the event is dropped instead of applied. Mirrors `advance`'s
+/// locked check-then-write, minus the emit.
 fn apply_for(ctx: &AppCtx, gen: u64, ev: Event) -> Option<Phase> {
+    let mut guard = ctx.phase.lock().unwrap();
     if ctx.take_gen.load(Ordering::SeqCst) != gen {
         return None;
     }
-    apply(ctx, ev)
+    let next = transition(*guard, ev)?;
+    *guard = next;
+    Some(next)
 }
 
 /// Atomically: check the take is current, apply the transition, write the
@@ -280,12 +277,19 @@ pub async fn transcribe_and_deliver(ctx: Arc<AppCtx>, wav: Vec<u8>, gen: u64, du
 const PARTIAL_INTERVAL_MS: u64 = 2500;
 /// Don't bother transcribing less than 1 s of audio.
 const PARTIAL_MIN_SECS: f32 = 1.0;
+/// Locked-mode takes auto-stop at this length so a forgotten hotkey doesn't
+/// record (and eventually upload) indefinitely.
+const MAX_TAKE_SECS: f32 = 300.0;
+/// Partial uploads only cover the tail of a long take — bounds upload cost
+/// as the take grows; the final pass still transcribes the full audio.
+const PARTIAL_WINDOW_SECS: f32 = 25.0;
 
 fn spawn_partial_loop(ctx: Arc<AppCtx>, gen: u64) {
     tauri::async_runtime::spawn(async move {
         let mut interval =
             tokio::time::interval(std::time::Duration::from_millis(PARTIAL_INTERVAL_MS));
         interval.tick().await; // first tick fires immediately; skip it
+        let mut auto_stop_fired = false;
         loop {
             interval.tick().await;
             // Phase check alone isn't enough: a new take could already be
@@ -295,7 +299,17 @@ fn spawn_partial_loop(ctx: Arc<AppCtx>, gen: u64) {
             {
                 return; // recording ended, or this loop belongs to a stale take
             }
-            if ctx.recorder.duration_secs() < PARTIAL_MIN_SECS {
+            let elapsed = ctx.recorder.duration_secs();
+            if !auto_stop_fired && elapsed > MAX_TAKE_SECS {
+                auto_stop_fired = true;
+                let ctx2 = ctx.clone();
+                // handle_signal is sync and does its own async spawn; run it
+                // off the tokio executor. Guarded by auto_stop_fired so a
+                // delayed phase transition can't fire this more than once.
+                std::thread::spawn(move || handle_signal(ctx2, HotkeySignal::Stop));
+                continue;
+            }
+            if elapsed < PARTIAL_MIN_SECS {
                 continue;
             }
             // One partial request at a time; skip a beat when Groq is slow.
@@ -310,6 +324,9 @@ fn spawn_partial_loop(ctx: Arc<AppCtx>, gen: u64) {
                 ctx.partial_inflight.store(false, Ordering::SeqCst);
                 continue;
             };
+            // Only the last PARTIAL_WINDOW_SECS get uploaded for the partial
+            // preview; the final transcription still uses the full take.
+            let windowed = audio::tail(&samples, rate, ch, PARTIAL_WINDOW_SECS).to_vec();
             let (groq_url, lang) = {
                 let s = ctx.settings.read().unwrap();
                 (s.groq_url.clone(), s.language.code())
@@ -320,7 +337,7 @@ fn spawn_partial_loop(ctx: Arc<AppCtx>, gen: u64) {
             };
             let ctx2 = ctx.clone();
             tauri::async_runtime::spawn(async move {
-                let wav = audio::prepare_wav(&samples, rate, ch);
+                let wav = audio::prepare_wav(&windowed, rate, ch);
                 let stt = SttClient::new(groq_url, api_key);
                 if let Ok(t) = stt.transcribe(wav, lang).await {
                     // Only show it if we're still recording the same take.

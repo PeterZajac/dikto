@@ -31,6 +31,19 @@ pub fn resample_linear(mono: &[f32], src_rate: u32, dst_rate: u32) -> Vec<f32> {
         .collect()
 }
 
+/// Returns the last `secs` seconds of `samples`, frame-aligned to `ch`
+/// channels. Returns the whole slice if it's already shorter than the window.
+pub fn tail(samples: &[f32], rate: u32, ch: u16, secs: f32) -> &[f32] {
+    let ch = ch.max(1) as usize;
+    let want = (rate as f32 * secs).round() as usize * ch;
+    if want >= samples.len() {
+        return samples;
+    }
+    let start = samples.len() - want;
+    let start = start - (start % ch); // never split a frame
+    &samples[start..]
+}
+
 pub const TARGET_RATE: u32 = 16_000;
 
 pub fn prepare_wav(samples: &[f32], src_rate: u32, channels: u16) -> Vec<u8> {
@@ -222,5 +235,30 @@ mod tests {
         assert_eq!(&wav[8..12], b"WAVE");
         // 44-byte canonical header + 2 bytes per sample
         assert_eq!(wav.len(), 44 + 16_000 * 2);
+    }
+
+    #[test]
+    fn tail_returns_whole_slice_when_shorter_than_window() {
+        let samples = vec![1.0_f32, 2.0, 3.0, 4.0];
+        let out = tail(&samples, 16_000, 1, 25.0);
+        assert_eq!(out, &samples[..]);
+    }
+
+    #[test]
+    fn tail_slices_last_n_seconds_frame_aligned_stereo() {
+        // rate=4, ch=2 => 8 samples/sec; secs=1.0 => window of 4 frames (8 samples).
+        let samples: Vec<f32> = (0..20).map(|i| i as f32).collect(); // 10 stereo frames
+        let out = tail(&samples, 4, 2, 1.0);
+        assert_eq!(out, &samples[12..20]);
+        assert_eq!(out.len() % 2, 0);
+    }
+
+    #[test]
+    fn tail_rounds_start_down_to_frame_boundary() {
+        // ch=2 but samples.len() is odd (pathological input) — the computed
+        // start must still land on an even index, never splitting a frame.
+        let samples: Vec<f32> = (0..21).map(|i| i as f32).collect();
+        let out = tail(&samples, 2, 2, 1.0); // window = round(2*1.0)=2 frames = 4 samples
+        assert_eq!(out, &samples[16..21]);
     }
 }

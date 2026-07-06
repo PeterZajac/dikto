@@ -13,6 +13,8 @@ pub enum SttError {
     Network(String),
     #[error("groq api {status}: {body}")]
     Api { status: u16, body: String },
+    #[error("parse: {0}")]
+    Parse(String),
 }
 
 #[derive(Deserialize)]
@@ -78,7 +80,7 @@ impl SttClient {
         let g: GroqResponse = resp
             .json()
             .await
-            .map_err(|e| SttError::Network(e.to_string()))?;
+            .map_err(|e| SttError::Parse(e.to_string()))?;
         Ok(Transcript {
             text: g.text.trim().to_string(),
             language: g.language,
@@ -133,6 +135,21 @@ mod tests {
         assert!(matches!(
             client.transcribe(vec![0], None).await,
             Err(SttError::Network(_))
+        ));
+    }
+
+    #[tokio::test]
+    async fn invalid_json_on_2xx_surfaces_as_parse_error() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .respond_with(ResponseTemplate::new(200).set_body_string("not json"))
+            .mount(&server)
+            .await;
+
+        let client = SttClient::new(server.uri(), "k".into());
+        assert!(matches!(
+            client.transcribe(vec![0], None).await,
+            Err(SttError::Parse(_))
         ));
     }
 }

@@ -34,16 +34,16 @@ pub fn inject_text(text: &str) -> Result<(), InjectError> {
     #[cfg(not(target_os = "macos"))]
     let modifier = Key::Control;
 
-    let press = |e: &mut Enigo| -> Result<(), InjectError> {
-        e.key(modifier, Direction::Press)
-            .map_err(|err| InjectError::Keystroke(err.to_string()))?;
-        e.key(Key::Unicode('v'), Direction::Click)
-            .map_err(|err| InjectError::Keystroke(err.to_string()))?;
-        e.key(modifier, Direction::Release)
-            .map_err(|err| InjectError::Keystroke(err.to_string()))?;
-        Ok(())
+    // The modifier release must always be attempted, even if the 'v' click
+    // errors — otherwise a failed paste leaves Meta/Ctrl stuck down. The
+    // first error encountered still wins as the returned result.
+    let press_err = enigo.key(modifier, Direction::Press).err();
+    let click_err = enigo.key(Key::Unicode('v'), Direction::Click).err();
+    let release_err = enigo.key(modifier, Direction::Release).err();
+    let result = match press_err.or(click_err).or(release_err) {
+        Some(err) => Err(InjectError::Keystroke(err.to_string())),
+        None => Ok(()),
     };
-    let result = press(&mut enigo);
 
     // Let the paste land before restoring the old clipboard.
     std::thread::sleep(Duration::from_millis(150));
