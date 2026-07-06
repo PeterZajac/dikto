@@ -22,22 +22,37 @@ export default function Bubble() {
   const timerRef = useRef<number | null>(null);
 
   useEffect(() => {
+    let cancelled = false;
     const unsubs: Array<() => void> = [];
-    listen<StatePayload>(EVENT_STATE, (e) => {
-      setPhase(e.payload.phase);
-      setMessage(e.payload.message);
-      if (e.payload.phase === "recording") {
-        setPartial("");
-        setSeconds(0);
-      }
-    }).then((u) => unsubs.push(u));
-    listen<AmplitudePayload>(EVENT_AMPLITUDE, (e) => {
-      setBars((prev) => [...prev.slice(1), Math.min(1, e.payload.value * 6)]);
-    }).then((u) => unsubs.push(u));
-    listen<PartialPayload>(EVENT_PARTIAL, (e) => {
-      setPartial(e.payload.text);
-    }).then((u) => unsubs.push(u));
-    return () => unsubs.forEach((u) => u());
+    const track = (p: Promise<() => void>) =>
+      p.then((u) => {
+        if (cancelled) u();
+        else unsubs.push(u);
+      });
+    track(
+      listen<StatePayload>(EVENT_STATE, (e) => {
+        setPhase(e.payload.phase);
+        setMessage(e.payload.message);
+        if (e.payload.phase === "recording") {
+          setPartial("");
+          setSeconds(0);
+        }
+      })
+    );
+    track(
+      listen<AmplitudePayload>(EVENT_AMPLITUDE, (e) => {
+        setBars((prev) => [...prev.slice(1), Math.min(1, e.payload.value * 6)]);
+      })
+    );
+    track(
+      listen<PartialPayload>(EVENT_PARTIAL, (e) => {
+        setPartial(e.payload.text);
+      })
+    );
+    return () => {
+      cancelled = true;
+      unsubs.forEach((u) => u());
+    };
   }, []);
 
   useEffect(() => {
