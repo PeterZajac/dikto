@@ -1,4 +1,5 @@
 use serde::Deserialize;
+use std::time::Duration;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Transcript {
@@ -34,7 +35,11 @@ impl SttClient {
         Self {
             base_url: base_url.trim_end_matches('/').to_string(),
             api_key,
-            http: reqwest::Client::new(),
+            http: reqwest::Client::builder()
+                .timeout(Duration::from_secs(30))
+                .connect_timeout(Duration::from_secs(5))
+                .build()
+                .expect("reqwest client"),
         }
     }
 
