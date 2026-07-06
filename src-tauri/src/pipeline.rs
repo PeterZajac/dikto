@@ -4,7 +4,7 @@ use crate::hotkey::HotkeySignal;
 use crate::settings::{self, Settings};
 use crate::state::{transition, Event, Phase};
 use crate::stt::SttClient;
-use std::sync::atomic::AtomicBool;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
 use tauri::{AppHandle, Emitter, Manager};
 
@@ -84,6 +84,7 @@ fn start_recording(ctx: &Arc<AppCtx>) {
         Ok(()) => {
             set_phase(ctx, Phase::Recording, None);
             show_bubble(ctx);
+            spawn_partial_loop(ctx.clone());
         }
         Err(e) => {
             apply(ctx, Event::Failed);
@@ -189,4 +190,59 @@ pub async fn transcribe_and_deliver(ctx: Arc<AppCtx>, wav: Vec<u8>) {
             set_phase(&ctx, Phase::Error, Some(&format!("vloženie zlyhalo: {e}")));
         }
     }
+}
+
+const PARTIAL_INTERVAL_MS: u64 = 2500;
+/// Don't bother transcribing less than 1 s of audio.
+const PARTIAL_MIN_SECS: f32 = 1.0;
+
+fn spawn_partial_loop(ctx: Arc<AppCtx>) {
+    tauri::async_runtime::spawn(async move {
+        let mut interval =
+            tokio::time::interval(std::time::Duration::from_millis(PARTIAL_INTERVAL_MS));
+        interval.tick().await; // first tick fires immediately; skip it
+        loop {
+            interval.tick().await;
+            if *ctx.phase.lock().unwrap() != Phase::Recording {
+                return; // recording ended — loop dies with it
+            }
+            if ctx.recorder.duration_secs() < PARTIAL_MIN_SECS {
+                continue;
+            }
+            // One partial request at a time; skip a beat when Groq is slow.
+            if ctx
+                .partial_inflight
+                .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+                .is_err()
+            {
+                continue;
+            }
+            let Some((samples, rate, ch)) = ctx.recorder.snapshot() else {
+                ctx.partial_inflight.store(false, Ordering::SeqCst);
+                continue;
+            };
+            let (groq_url, lang) = {
+                let s = ctx.settings.read().unwrap();
+                (s.groq_url.clone(), s.language.code())
+            };
+            let Some(api_key) = settings::groq_api_key() else {
+                ctx.partial_inflight.store(false, Ordering::SeqCst);
+                continue;
+            };
+            let ctx2 = ctx.clone();
+            tauri::async_runtime::spawn(async move {
+                let wav = audio::prepare_wav(&samples, rate, ch);
+                let stt = SttClient::new(groq_url, api_key);
+                if let Ok(t) = stt.transcribe(wav, lang).await {
+                    // Only show it if we're still recording.
+                    if *ctx2.phase.lock().unwrap() == Phase::Recording && !t.text.is_empty() {
+                        let _ = ctx2
+                            .app
+                            .emit("dictation:partial", serde_json::json!({ "text": t.text }));
+                    }
+                }
+                ctx2.partial_inflight.store(false, Ordering::SeqCst);
+            });
+        }
+    });
 }
