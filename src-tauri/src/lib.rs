@@ -79,6 +79,7 @@ pub fn run() {
                 settings_path,
                 history,
                 capture_next: capture_next.clone(),
+                tray_lang_items: Mutex::new(None),
             });
             app.manage(ctx.clone());
 
@@ -132,9 +133,13 @@ pub fn run() {
                             if move_gen.load(Ordering::SeqCst) != gen {
                                 return; // superseded by a later move
                             }
-                            let mut settings = ctx.settings.write().unwrap();
-                            settings.bubble_pos = Some(pos);
-                            let _ = settings::save(&ctx.settings_path, &settings);
+                            let mut new = ctx.settings.read().unwrap().clone();
+                            new.bubble_pos = Some(pos);
+                            // Routed through apply_settings (not a direct write+save) so
+                            // `settings:changed` fires — otherwise Settings.tsx's stale
+                            // in-memory copy round-trips through set_settings on any
+                            // unrelated change and silently reverts this.
+                            let _ = commands::apply_settings(&ctx, new);
                         });
                     }
                 });
@@ -247,6 +252,9 @@ fn build_tray(app: &tauri::AppHandle, ctx: &Arc<AppCtx>) -> tauri::Result<()> {
         (LanguageMode::Cs, lang_cs),
         (LanguageMode::En, lang_en),
     ];
+    // Handed to apply_settings so it can refresh these checkmarks regardless
+    // of which path (tray or Settings page) changed the language.
+    *ctx.tray_lang_items.lock().unwrap() = Some(lang_items);
 
     let ctx_for_menu = ctx.clone();
     let mut builder = TrayIconBuilder::new()
@@ -269,11 +277,9 @@ fn build_tray(app: &tauri::AppHandle, ctx: &Arc<AppCtx>) -> tauri::Result<()> {
                 };
                 let mut new = ctx_for_menu.settings.read().unwrap().clone();
                 new.language = mode;
-                if commands::apply_settings(&ctx_for_menu, new).is_ok() {
-                    for (item_mode, item) in &lang_items {
-                        let _ = item.set_checked(*item_mode == mode);
-                    }
-                }
+                // apply_settings refreshes all four checkmarks itself via
+                // ctx.tray_lang_items, so no need to touch them here.
+                let _ = commands::apply_settings(&ctx_for_menu, new);
             }
             _ => {}
         });

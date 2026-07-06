@@ -1,13 +1,19 @@
 use crate::audio::{self, Recorder};
 use crate::cleanup::CleanupClient;
 use crate::hotkey::HotkeySignal;
-use crate::settings::{self, Settings};
+use crate::settings::{self, LanguageMode, Settings};
 use crate::state::{transition, Event, Phase};
 use crate::stt::SttClient;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
-use tauri::{AppHandle, Emitter, Manager};
+use tauri::menu::CheckMenuItem;
+use tauri::{AppHandle, Emitter, Manager, Wry};
+
+/// The tray's four language `CheckMenuItem`s, keyed by the mode each one
+/// represents — `apply_settings` uses this to keep the tray's checkmarks in
+/// sync whenever settings change from any source (Settings page, tray itself).
+pub type TrayLangItems = Vec<(LanguageMode, CheckMenuItem<Wry>)>;
 
 pub struct AppCtx {
     pub phase: Mutex<Phase>,
@@ -28,6 +34,9 @@ pub struct AppCtx {
     /// Shared with hotkey::spawn's listener thread — set true to divert the
     /// next KeyPress into a `hotkey:captured` event instead of interpreting it.
     pub capture_next: Arc<AtomicBool>,
+    /// Set once by `build_tray` after the menu is built; `None` until then.
+    /// `apply_settings` uses it to refresh the tray's language checkmarks.
+    pub tray_lang_items: Mutex<Option<TrayLangItems>>,
 }
 
 /// Applies an event raised by async work belonging to a specific take. If

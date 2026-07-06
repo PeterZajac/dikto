@@ -40,13 +40,22 @@ pub fn get_settings(ctx: State<'_, Arc<AppCtx>>) -> Settings {
 }
 
 /// Persists `new`, updates the live ctx, and notifies the frontend. Shared by
-/// the `set_settings` command and the tray's language submenu so both paths
-/// stay in sync (hotkey listener, on-disk file, in-memory settings, event).
+/// the `set_settings` command, the tray's language submenu, and the bubble's
+/// position-save task so all paths stay in sync (hotkey listener, on-disk
+/// file, in-memory settings, event, tray checkmarks).
 pub(crate) fn apply_settings(ctx: &AppCtx, new: Settings) -> Result<(), String> {
     *ctx.hotkey_name.write().unwrap() = new.hotkey.clone();
     settings::save(&ctx.settings_path, &new).map_err(|e| e.to_string())?;
     *ctx.settings.write().unwrap() = new.clone();
     let _ = ctx.app.emit("settings:changed", &new);
+    // Keep the tray's language checkmarks in sync regardless of which path
+    // changed the language (Settings page, tray itself). No-op until the
+    // tray has finished building.
+    if let Some(items) = ctx.tray_lang_items.lock().unwrap().as_ref() {
+        for (mode, item) in items {
+            let _ = item.set_checked(*mode == new.language);
+        }
+    }
     Ok(())
 }
 
