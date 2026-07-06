@@ -118,10 +118,13 @@ pub fn spawn(
                 Action::Stop => { let _ = tx.send(HotkeySignal::Stop); }
                 Action::None => {}
             };
-            // Set once a capture-mode KeyPress is swallowed, so its matching
-            // KeyRelease is swallowed too — otherwise that release could be
-            // misread as a key-up of the (still) configured hotkey.
-            let mut swallow_release = false;
+            // Set once a capture-mode KeyPress is swallowed, holding that
+            // key's name, so its matching KeyRelease is swallowed too —
+            // otherwise that release could be misread as a key-up of the
+            // (still) configured hotkey. Only the release of THIS key is
+            // swallowed; releases of any other key (e.g. a hotkey the user
+            // was already holding) still flow through to interpretation.
+            let mut swallow_release_of: Option<String> = None;
             let result = rdev::listen(move |ev| {
                 let key_name = match ev.event_type {
                     rdev::EventType::KeyPress(k) => Some((format!("{k:?}"), true)),
@@ -131,14 +134,14 @@ pub fn spawn(
                 let Some((name, is_down)) = key_name else { return };
 
                 if is_down && capture_next.swap(false, Ordering::SeqCst) {
-                    swallow_release = true;
+                    swallow_release_of = Some(name.clone());
                     if name != "Escape" {
                         on_captured(name);
                     }
                     return;
                 }
-                if !is_down && swallow_release {
-                    swallow_release = false;
+                if !is_down && swallow_release_of.as_deref() == Some(name.as_str()) {
+                    swallow_release_of = None;
                     return;
                 }
 

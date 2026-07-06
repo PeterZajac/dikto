@@ -323,12 +323,15 @@ export default function SettingsPage() {
             )}
           </div>
         </div>
+      </section>
 
+      <section className="settings-section">
+        <div className="settings-section__head">
+          <h2 className="settings-section__title">Jazyk</h2>
+          <p className="settings-section__desc">Jazyk diktovania pre prepis reči.</p>
+        </div>
         <div className="settings-row">
-          <div className="settings-row__text">
-            <span className="settings-row__label">Jazyk</span>
-            <span className="settings-row__desc">Jazyk diktovania pre prepis reči.</span>
-          </div>
+          <span className="settings-row__label">Jazyk</span>
           <div className="settings-row__control">
             <div className="segmented" role="tablist" aria-label="Jazyk">
               {LANGUAGE_OPTIONS.map((opt) => (
