@@ -127,6 +127,28 @@ pub fn permissions_status() -> serde_json::Value {
     serde_json::json!({ "accessibility": accessibility })
 }
 
+/// Opens the OS's default browser — but only for the one hardcoded Groq
+/// signup URL (wizard step 3). Anything else is silently ignored so this
+/// can never become a generic "open arbitrary URL" primitive.
+#[tauri::command]
+pub fn open_url(url: String) {
+    if url != "https://console.groq.com" {
+        return;
+    }
+    #[cfg(target_os = "macos")]
+    {
+        let _ = std::process::Command::new("open").arg(&url).spawn();
+    }
+    #[cfg(target_os = "windows")]
+    {
+        let _ = std::process::Command::new("cmd").args(["/c", "start", "", &url]).spawn();
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+    {
+        let _ = std::process::Command::new("xdg-open").arg(&url).spawn();
+    }
+}
+
 /// `pane`: "accessibility" | "microphone".
 #[tauri::command]
 pub fn open_privacy_settings(pane: String) {

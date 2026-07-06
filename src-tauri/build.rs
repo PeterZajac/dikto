@@ -15,6 +15,7 @@ fn main() {
             "history_clear",
             "permissions_status",
             "open_privacy_settings",
+            "open_url",
             "hotkey_capture_start",
         ])),
     )

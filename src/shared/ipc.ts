@@ -48,6 +48,8 @@ export const api = {
   historyClear: () => invoke<void>("history_clear"),
   permissionsStatus: () => invoke<PermissionsStatus>("permissions_status"),
   openPrivacySettings: (pane: PrivacyPane) => invoke<void>("open_privacy_settings", { pane }),
+  // Hard-allowlisted server-side to https://console.groq.com — see open_url in commands.rs.
+  openUrl: (url: string) => invoke<void>("open_url", { url }),
   // cancel: true disarms the capture flag without a keypress (used by the
   // Settings UI's 10s capture-mode timeout).
   hotkeyCaptureStart: (cancel = false) => invoke<void>("hotkey_capture_start", { cancel }),

@@ -42,6 +42,7 @@ pub fn run() {
             commands::history_clear,
             commands::permissions_status,
             commands::open_privacy_settings,
+            commands::open_url,
             commands::hotkey_capture_start
         ])
         .setup(|app| {
