@@ -10,9 +10,12 @@ mod state;
 mod stt;
 
 use pipeline::AppCtx;
-use std::sync::atomic::{AtomicBool, AtomicU64};
+use settings::LanguageMode;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{mpsc, Arc, Mutex, RwLock};
-use tauri::{Emitter, Manager};
+use tauri::menu::{CheckMenuItem, CheckMenuItemBuilder, MenuBuilder, MenuItemBuilder, SubmenuBuilder};
+use tauri::tray::TrayIconBuilder;
+use tauri::{Emitter, Manager, WindowEvent};
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -55,6 +58,7 @@ pub fn run() {
             }
             let s = settings::load(&settings_path);
             let hotkey_name = Arc::new(RwLock::new(s.hotkey.clone()));
+            let bubble_pos = s.bubble_pos;
 
             let data_dir = app.path().app_data_dir().expect("app data dir");
             std::fs::create_dir_all(&data_dir).expect("create app data dir");
@@ -78,8 +82,22 @@ pub fn run() {
             });
             app.manage(ctx.clone());
 
+            build_tray(app.handle(), &ctx)?;
+
+            if let Some(main) = app.get_webview_window("main") {
+                let main_for_close = main.clone();
+                main.on_window_event(move |event| {
+                    if let WindowEvent::CloseRequested { api, .. } = event {
+                        // The app lives on in the tray — closing the window
+                        // just hides it instead of quitting the process.
+                        api.prevent_close();
+                        let _ = main_for_close.hide();
+                    }
+                });
+            }
+
             if let Some(bubble) = app.get_webview_window("bubble") {
-                position_bubble(&bubble);
+                position_bubble(&bubble, bubble_pos);
                 #[cfg(target_os = "macos")]
                 {
                     use tauri_nspanel::WebviewWindowExt;
@@ -96,6 +114,30 @@ pub fn run() {
                         );
                     }
                 }
+
+                // Persist the bubble's position whenever the user drags it,
+                // debounced so a drag doesn't spam disk writes: each Moved
+                // event bumps a generation counter and schedules a save that
+                // only actually writes if no later move has superseded it.
+                let move_gen = Arc::new(AtomicU64::new(0));
+                let ctx_for_move = ctx.clone();
+                bubble.on_window_event(move |event| {
+                    if let WindowEvent::Moved(pos) = event {
+                        let gen = move_gen.fetch_add(1, Ordering::SeqCst) + 1;
+                        let move_gen = move_gen.clone();
+                        let ctx = ctx_for_move.clone();
+                        let pos = (pos.x, pos.y);
+                        tauri::async_runtime::spawn(async move {
+                            tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+                            if move_gen.load(Ordering::SeqCst) != gen {
+                                return; // superseded by a later move
+                            }
+                            let mut settings = ctx.settings.write().unwrap();
+                            settings.bubble_pos = Some(pos);
+                            let _ = settings::save(&ctx.settings_path, &settings);
+                        });
+                    }
+                });
             }
 
             let (tx, rx) = mpsc::channel::<hotkey::HotkeySignal>();
@@ -127,11 +169,117 @@ pub fn run() {
         .expect("error while running tauri application");
 }
 
-pub(crate) fn position_bubble(win: &tauri::WebviewWindow) {
+/// Positions the bubble at `saved` if it's still on-screen (some monitor
+/// intersects where the bubble would land), otherwise falls back to the
+/// default bottom-center placement.
+pub(crate) fn position_bubble(win: &tauri::WebviewWindow, saved: Option<(i32, i32)>) {
+    if let Some(pos) = saved {
+        if fits_on_a_monitor(win, pos) {
+            let _ = win.set_position(tauri::PhysicalPosition::new(pos.0, pos.1));
+            return;
+        }
+    }
     if let (Ok(Some(monitor)), Ok(size)) = (win.primary_monitor(), win.outer_size()) {
         let m = monitor.size();
         let x = (m.width.saturating_sub(size.width)) / 2;
         let y = m.height.saturating_sub(size.height + 120);
         let _ = win.set_position(tauri::PhysicalPosition::new(x as i32, y as i32));
     }
+}
+
+/// True if placing `win` at `pos` (top-left, physical pixels) would overlap
+/// at least one currently available monitor.
+fn fits_on_a_monitor(win: &tauri::WebviewWindow, pos: (i32, i32)) -> bool {
+    let Ok(size) = win.outer_size() else { return false };
+    let Ok(monitors) = win.available_monitors() else { return false };
+    let (x, y) = (pos.0 as i64, pos.1 as i64);
+    let (right, bottom) = (x + size.width as i64, y + size.height as i64);
+    monitors.iter().any(|m| {
+        let mp = m.position();
+        let ms = m.size();
+        let (mx, my) = (mp.x as i64, mp.y as i64);
+        let (mright, mbottom) = (mx + ms.width as i64, my + ms.height as i64);
+        x < mright && right > mx && y < mbottom && bottom > my
+    })
+}
+
+/// Builds the tray icon: an "open" item, a language submenu that mirrors
+/// `settings.language` and updates it via the same path as `set_settings`,
+/// and a quit item. The returned `TrayIcon` is kept alive internally by
+/// Tauri's resource table, so it doesn't need to be stored by the caller.
+fn build_tray(app: &tauri::AppHandle, ctx: &Arc<AppCtx>) -> tauri::Result<()> {
+    let current_lang = ctx.settings.read().unwrap().language;
+
+    let lang_auto = CheckMenuItemBuilder::with_id("lang_auto", "Auto")
+        .checked(current_lang == LanguageMode::Auto)
+        .build(app)?;
+    let lang_sk = CheckMenuItemBuilder::with_id("lang_sk", "SK")
+        .checked(current_lang == LanguageMode::Sk)
+        .build(app)?;
+    let lang_cs = CheckMenuItemBuilder::with_id("lang_cs", "CS")
+        .checked(current_lang == LanguageMode::Cs)
+        .build(app)?;
+    let lang_en = CheckMenuItemBuilder::with_id("lang_en", "EN")
+        .checked(current_lang == LanguageMode::En)
+        .build(app)?;
+
+    let lang_menu = SubmenuBuilder::new(app, "Jazyk")
+        .items(&[&lang_auto, &lang_sk, &lang_cs, &lang_en])
+        .build()?;
+
+    let open_item = MenuItemBuilder::with_id("tray_open", "Otvoriť Local Wispr Flow").build(app)?;
+    let quit_item = MenuItemBuilder::with_id("tray_quit", "Ukončiť").build(app)?;
+
+    let menu = MenuBuilder::new(app)
+        .item(&open_item)
+        .separator()
+        .item(&lang_menu)
+        .separator()
+        .item(&quit_item)
+        .build()?;
+
+    // (mode, item) pairs so a selection can flip its own check on and every
+    // other language's check off — Tauri doesn't do radio-group behavior for
+    // plain CheckMenuItems.
+    let lang_items: Vec<(LanguageMode, CheckMenuItem<tauri::Wry>)> = vec![
+        (LanguageMode::Auto, lang_auto),
+        (LanguageMode::Sk, lang_sk),
+        (LanguageMode::Cs, lang_cs),
+        (LanguageMode::En, lang_en),
+    ];
+
+    let ctx_for_menu = ctx.clone();
+    let mut builder = TrayIconBuilder::new()
+        .menu(&menu)
+        .show_menu_on_left_click(true)
+        .on_menu_event(move |app, event| match event.id().0.as_str() {
+            "tray_open" => {
+                if let Some(win) = app.get_webview_window("main") {
+                    let _ = win.show();
+                    let _ = win.set_focus();
+                }
+            }
+            "tray_quit" => app.exit(0),
+            id @ ("lang_auto" | "lang_sk" | "lang_cs" | "lang_en") => {
+                let mode = match id {
+                    "lang_auto" => LanguageMode::Auto,
+                    "lang_sk" => LanguageMode::Sk,
+                    "lang_cs" => LanguageMode::Cs,
+                    _ => LanguageMode::En,
+                };
+                let mut new = ctx_for_menu.settings.read().unwrap().clone();
+                new.language = mode;
+                if commands::apply_settings(&ctx_for_menu, new).is_ok() {
+                    for (item_mode, item) in &lang_items {
+                        let _ = item.set_checked(*item_mode == mode);
+                    }
+                }
+            }
+            _ => {}
+        });
+    if let Some(icon) = app.default_window_icon().cloned() {
+        builder = builder.icon(icon);
+    }
+    builder.build(app)?;
+    Ok(())
 }

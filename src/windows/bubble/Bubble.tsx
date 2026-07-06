@@ -47,6 +47,7 @@ export default function Bubble() {
         if (e.payload.phase === "recording") {
           setPartial("");
           setSeconds(0);
+          setBars(Array(BAR_COUNT).fill(0));
         }
       })
     );

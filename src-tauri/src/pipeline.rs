@@ -91,7 +91,8 @@ pub(crate) fn begin(ctx: &AppCtx, ev: Event, new_take: bool, message: Option<&st
 
 fn show_bubble(ctx: &AppCtx) {
     if let Some(w) = ctx.app.get_webview_window("bubble") {
-        crate::position_bubble(&w);
+        let saved = ctx.settings.read().unwrap().bubble_pos;
+        crate::position_bubble(&w, saved);
         let _ = w.show();
     }
 }
