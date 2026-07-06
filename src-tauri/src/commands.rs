@@ -1,7 +1,6 @@
 use crate::pipeline::{self, AppCtx};
 use crate::settings;
 use crate::state::Event;
-use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use tauri::State;
 
@@ -13,13 +12,11 @@ pub fn cancel_dictation(ctx: State<'_, Arc<AppCtx>>) {
 /// Re-runs STT on the audio kept from a failed attempt (spec §6: "skúsiť znova").
 #[tauri::command]
 pub async fn retry_transcription(ctx: State<'_, Arc<AppCtx>>) -> Result<(), String> {
-    // Bump gen before the transition so a concurrent start/cancel racing us
-    // bumps it again too — our advance() calls then just no-op instead of
-    // clobbering whatever phase the FSM has since moved to.
-    let gen = ctx.take_gen.fetch_add(1, Ordering::SeqCst) + 1;
-    if !pipeline::advance(&ctx, gen, Event::RetryRequested, None) {
+    // begin() only bumps gen and writes the phase if the transition is legal,
+    // so a second fast click (still Transcribing) is a no-op, not a clobber.
+    let Some(gen) = pipeline::begin(&ctx, Event::RetryRequested, true, None) else {
         return Err("retry nie je možný teraz".into());
-    }
+    };
     let wav = ctx.pending_wav.lock().unwrap().take();
     let Some(wav) = wav else {
         pipeline::advance(&ctx, gen, Event::Failed, Some("žiadne audio na zopakovanie"));

@@ -14,19 +14,11 @@ pub struct AppCtx {
     pub settings: RwLock<Settings>,
     pub pending_wav: Mutex<Option<Vec<u8>>>,
     pub partial_inflight: AtomicBool,
-    /// Bumped on every start_recording/cancel; async tasks capture the value
-    /// at spawn time and drop their FSM event if it no longer matches —
-    /// otherwise a stale task from a cancelled take could clobber a new one.
+    /// Bumped on every start_recording/cancel/retry; async tasks capture the
+    /// value at spawn time and drop their FSM event if it no longer matches —
+    /// otherwise a stale task from a superseded take could clobber a new one.
     pub take_gen: AtomicU64,
     pub app: AppHandle,
-}
-
-pub fn set_phase(ctx: &AppCtx, phase: Phase, message: Option<&str>) {
-    *ctx.phase.lock().unwrap() = phase;
-    let _ = ctx.app.emit(
-        "dictation:state",
-        serde_json::json!({ "phase": phase, "message": message }),
-    );
 }
 
 pub(crate) fn apply(ctx: &AppCtx, ev: Event) -> Option<Phase> {
@@ -66,6 +58,31 @@ pub(crate) fn advance(ctx: &AppCtx, gen: u64, ev: Event, message: Option<&str>) 
     true
 }
 
+/// Entry point for synchronous, hotkey/command-driven events (start, stop,
+/// cancel, retry) — as opposed to take-scoped async events, which go through
+/// `advance`. Under the phase lock: validate the transition; on success
+/// optionally start a new take (bump take_gen), write the phase, then emit.
+/// Returns the take gen when the transition applied; None means the event
+/// was dropped with zero side effects (no gen bump, no phase write, no emit).
+pub(crate) fn begin(ctx: &AppCtx, ev: Event, new_take: bool, message: Option<&str>) -> Option<u64> {
+    let (next, gen) = {
+        let mut guard = ctx.phase.lock().unwrap();
+        let next = transition(*guard, ev)?;
+        let gen = if new_take {
+            ctx.take_gen.fetch_add(1, Ordering::SeqCst) + 1
+        } else {
+            ctx.take_gen.load(Ordering::SeqCst)
+        };
+        *guard = next;
+        (next, gen)
+    };
+    let _ = ctx.app.emit(
+        "dictation:state",
+        serde_json::json!({ "phase": next, "message": message }),
+    );
+    Some(gen)
+}
+
 fn show_bubble(ctx: &AppCtx) {
     if let Some(w) = ctx.app.get_webview_window("bubble") {
         crate::position_bubble(&w);
@@ -90,15 +107,7 @@ pub fn handle_signal(ctx: Arc<AppCtx>, sig: HotkeySignal) {
     match sig {
         HotkeySignal::Start => start_recording(&ctx),
         HotkeySignal::Stop => {
-            if apply(&ctx, Event::StopRequested).is_some() {
-                set_phase(&ctx, Phase::Transcribing, None);
-                // take_gen is atomic and re-checked under the phase lock by
-                // advance() before every take-scoped transition, so a
-                // concurrent cross-thread cancel (cancel_dictation runs on
-                // its own thread) can't corrupt this read — at worst the
-                // gen is stale and finish() sees recorder.stop() return
-                // None, which self-heals via the Cancel event.
-                let gen = ctx.take_gen.load(Ordering::SeqCst);
+            if let Some(gen) = begin(&ctx, Event::StopRequested, false, None) {
                 let ctx2 = ctx.clone();
                 tauri::async_runtime::spawn(async move { finish(ctx2, gen).await });
             }
@@ -108,11 +117,10 @@ pub fn handle_signal(ctx: Arc<AppCtx>, sig: HotkeySignal) {
 }
 
 fn start_recording(ctx: &Arc<AppCtx>) {
-    if apply(ctx, Event::StartRequested).is_none() {
-        return;
-    }
     // New take: any in-flight async work from a previous one is now stale.
-    let gen = ctx.take_gen.fetch_add(1, Ordering::SeqCst) + 1;
+    let Some(gen) = begin(ctx, Event::StartRequested, true, None) else {
+        return;
+    };
     ctx.pending_wav.lock().unwrap().take();
     let app = ctx.app.clone();
     let last_emit = Arc::new(Mutex::new(std::time::Instant::now()));
@@ -125,25 +133,22 @@ fn start_recording(ctx: &Arc<AppCtx>) {
     });
     match ctx.recorder.start(on_amp) {
         Ok(()) => {
-            set_phase(ctx, Phase::Recording, None);
             show_bubble(ctx);
             spawn_partial_loop(ctx.clone(), gen);
         }
         Err(e) => {
-            // Synchronous, hotkey-driven — no stale-task risk here.
-            apply(ctx, Event::Failed);
-            set_phase(ctx, Phase::Error, Some(&format!("mikrofón: {e}")));
+            advance(ctx, gen, Event::Failed, Some(&format!("mikrofón: {e}")));
             show_bubble(ctx);
         }
     }
 }
 
 pub fn cancel(ctx: &Arc<AppCtx>) {
-    let _ = ctx.recorder.stop();
-    // Invalidate any async work in flight for the take being cancelled.
-    ctx.take_gen.fetch_add(1, Ordering::SeqCst);
-    if apply(ctx, Event::Cancel).is_some() {
-        set_phase(ctx, Phase::Idle, None);
+    // Gen only bumps (and recorder only stops) on a legal transition —
+    // otherwise (e.g. Esc during Injecting, where Cancel is illegal) we'd
+    // invalidate the in-flight take's gen while its phase stays put, wedging it.
+    if begin(ctx, Event::Cancel, true, None).is_some() {
+        let _ = ctx.recorder.stop();
         hide_bubble_after(ctx, 0);
     }
 }
