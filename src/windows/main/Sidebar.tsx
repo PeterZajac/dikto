@@ -27,7 +27,7 @@ export default function Sidebar({ page, onNavigate, version, warnings }: Sidebar
     <aside className="sidebar">
       <div className="sidebar__brand">
         <BrandMark />
-        <span className="sidebar__brand-name">Wispr Flow</span>
+        <span className="sidebar__brand-name">Dikto</span>
       </div>
 
       <nav className="sidebar__nav">
@@ -52,7 +52,7 @@ export default function Sidebar({ page, onNavigate, version, warnings }: Sidebar
         {warnings.map((w) => (
           <WarningRow key={w.id} warning={w} />
         ))}
-        <span className="sidebar__version">Local Wispr Flow{version ? ` v${version}` : ""}</span>
+        <span className="sidebar__version">Dikto{version ? ` v${version}` : ""}</span>
       </div>
     </aside>
   );

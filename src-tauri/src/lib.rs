@@ -50,6 +50,8 @@ pub fn run() {
         ])
         .setup(|app| {
             let config_dir = app.path().app_config_dir().expect("app config dir");
+            #[cfg(target_os = "macos")]
+            migrate_from_old_identifier(&config_dir, "settings.json");
             let settings_path = config_dir.join("settings.json");
             if !settings_path.exists() {
                 // First run: write the defaults template so the file always
@@ -61,6 +63,8 @@ pub fn run() {
             let bubble_pos = s.bubble_pos;
 
             let data_dir = app.path().app_data_dir().expect("app data dir");
+            #[cfg(target_os = "macos")]
+            migrate_from_old_identifier(&data_dir, "history.sqlite");
             std::fs::create_dir_all(&data_dir).expect("create app data dir");
             let history = history::HistoryStore::open_or_recover(&data_dir.join("history.sqlite"));
 
@@ -178,6 +182,28 @@ pub fn run() {
         .expect("error while running tauri application");
 }
 
+/// Copies `filename` from the pre-rename app dir (identifier
+/// `com.peterzajac.localwisprflow`) into `new_dir` if the new location
+/// doesn't have it yet, so upgrading users keep their settings/history after
+/// the `Local Wispr Flow` → `Dikto` identifier change. Best-effort: any
+/// failure just leaves the app to start fresh in `new_dir`.
+#[cfg(target_os = "macos")]
+fn migrate_from_old_identifier(new_dir: &std::path::Path, filename: &str) {
+    const OLD_IDENTIFIER: &str = "com.peterzajac.localwisprflow";
+    let new_file = new_dir.join(filename);
+    if new_file.exists() {
+        return;
+    }
+    let Some(old_file) = new_dir.parent().map(|p| p.join(OLD_IDENTIFIER).join(filename)) else {
+        return;
+    };
+    if !old_file.exists() {
+        return;
+    }
+    let _ = std::fs::create_dir_all(new_dir);
+    let _ = std::fs::copy(&old_file, &new_file);
+}
+
 /// Positions the bubble at `saved` if it's still on-screen (some monitor
 /// intersects where the bubble would land), otherwise falls back to the
 /// default bottom-center placement.
@@ -236,7 +262,7 @@ fn build_tray(app: &tauri::AppHandle, ctx: &Arc<AppCtx>) -> tauri::Result<()> {
         .items(&[&lang_auto, &lang_sk, &lang_cs, &lang_en])
         .build()?;
 
-    let open_item = MenuItemBuilder::with_id("tray_open", "Otvoriť Local Wispr Flow").build(app)?;
+    let open_item = MenuItemBuilder::with_id("tray_open", "Otvoriť Dikto").build(app)?;
     let quit_item = MenuItemBuilder::with_id("tray_quit", "Ukončiť").build(app)?;
 
     let menu = MenuBuilder::new(app)

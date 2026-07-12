@@ -111,8 +111,15 @@ pub fn save(path: &Path, s: &Settings) -> io::Result<()> {
     std::fs::write(path, serde_json::to_string_pretty(s)?)
 }
 
-const KEYRING_SERVICE: &str = "local-wispr-flow";
+const KEYRING_SERVICE: &str = "dikto";
+/// Pre-rename keychain service name — checked as a fallback so upgrading
+/// users don't have to re-enter their Groq key.
+const LEGACY_KEYRING_SERVICE: &str = "local-wispr-flow";
 const KEYRING_USER: &str = "groq";
+
+fn keyring_get(service: &str) -> Option<String> {
+    keyring::Entry::new(service, KEYRING_USER).ok()?.get_password().ok()
+}
 
 pub fn groq_api_key() -> Option<String> {
     if let Ok(k) = std::env::var("GROQ_API_KEY") {
@@ -120,10 +127,12 @@ pub fn groq_api_key() -> Option<String> {
             return Some(k);
         }
     }
-    keyring::Entry::new(KEYRING_SERVICE, KEYRING_USER)
-        .ok()?
-        .get_password()
-        .ok()
+    if let Some(k) = keyring_get(KEYRING_SERVICE) {
+        return Some(k);
+    }
+    let legacy = keyring_get(LEGACY_KEYRING_SERVICE)?;
+    let _ = set_groq_api_key(&legacy); // best-effort migrate to the new service
+    Some(legacy)
 }
 
 pub fn set_groq_api_key(key: &str) -> Result<(), keyring::Error> {

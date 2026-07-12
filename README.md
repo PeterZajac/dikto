@@ -1,4 +1,4 @@
-# Local Wispr Flow
+# Dikto
 
 A small, self-hosted alternative to [Wispr Flow](https://wisprflow.ai/): hold a
 hotkey, speak, and the transcribed (and optionally cleaned-up) text is pasted
@@ -42,7 +42,7 @@ notarized, Gatekeeper will refuse to open it the first time — clear the
 quarantine flag from a terminal:
 
 ```sh
-xattr -d com.apple.quarantine "/Applications/Local Wispr Flow.app"
+xattr -d com.apple.quarantine "/Applications/Dikto.app"
 ```
 
 Then open it normally. You'll be asked for Microphone and Accessibility

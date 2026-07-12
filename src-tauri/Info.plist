@@ -3,6 +3,6 @@
 <plist version="1.0">
 <dict>
   <key>NSMicrophoneUsageDescription</key>
-  <string>Local Wispr Flow potrebuje mikrofón na diktovanie.</string>
+  <string>Dikto potrebuje mikrofón na diktovanie.</string>
 </dict>
 </plist>

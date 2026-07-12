@@ -2,7 +2,7 @@ export default function WelcomeStep() {
   return (
     <>
       <p className="wizard-step__eyebrow">Vitaj</p>
-      <h1 className="wizard-step__title">Local Wispr Flow</h1>
+      <h1 className="wizard-step__title">Dikto</h1>
       <p className="wizard-step__desc">
         Podrž klávesovú skratku, povedz čo potrebuješ, a text sa objaví presne tam, kde práve píšeš —
         v mailoch, v editore, kdekoľvek má kurzor fokus.
