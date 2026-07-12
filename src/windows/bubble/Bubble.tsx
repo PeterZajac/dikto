@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type CSSProperties } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import {
@@ -22,6 +22,7 @@ export default function Bubble() {
   const [message, setMessage] = useState<string | null>(null);
   const [partial, setPartial] = useState("");
   const [bars, setBars] = useState<number[]>(Array(BAR_COUNT).fill(0));
+  const [amp, setAmp] = useState(0);
   const [seconds, setSeconds] = useState(0);
   const [retrying, setRetrying] = useState(false);
   const timerRef = useRef<number | null>(null);
@@ -48,12 +49,15 @@ export default function Bubble() {
           setPartial("");
           setSeconds(0);
           setBars(Array(BAR_COUNT).fill(0));
+          setAmp(0);
         }
       })
     );
     track(
       listen<AmplitudePayload>(EVENT_AMPLITUDE, (e) => {
-        setBars((prev) => [...prev.slice(1), Math.min(1, e.payload.value * 6)]);
+        const v = Math.min(1, e.payload.value * 6);
+        setAmp(v);
+        setBars((prev) => [...prev.slice(1), v]);
       })
     );
     track(
@@ -82,14 +86,19 @@ export default function Bubble() {
   const mmss = `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`;
 
   return (
-    <div className={`bubble bubble--${phase}`} data-tauri-drag-region>
+    <div
+      className={`bubble bubble--${phase}`}
+      data-tauri-drag-region
+      style={{ "--amp": amp } as CSSProperties}
+    >
       {phase === "recording" && (
         <button className="bubble__hit" onClick={cancel} title="Zrušiť (Esc)">
+          <span className="bubble__rec-dot" aria-hidden />
           <Waveform bars={bars} />
           {partial ? (
             <span className="bubble__partial">{partial}</span>
           ) : (
-            <span className="bubble__timer">● {mmss}</span>
+            <span className="bubble__timer">{mmss}</span>
           )}
         </button>
       )}
@@ -125,7 +134,7 @@ function Waveform({ bars }: { bars: number[] }) {
         <div
           key={i}
           className="waveform__bar"
-          style={{ height: `${Math.max(8, v * 100)}%` }}
+          style={{ height: `${Math.max(8, v * 100)}%`, "--i": i } as CSSProperties}
         />
       ))}
     </div>

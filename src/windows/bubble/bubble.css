@@ -38,6 +38,46 @@ body,
   border-color: rgba(248, 113, 113, 0.5);
 }
 
+/* Recording glow: --amp (0..1, driven by live amplitude in Bubble.tsx) scales
+   a pulsing accent glow and a subtle breathing scale. */
+.bubble--recording {
+  --amp: 0;
+  animation: bubble-breathe 1.8s ease-in-out infinite;
+  box-shadow:
+    0 0 0 1px var(--accent-border),
+    0 0 calc(6px + 20px * var(--amp)) calc(1px + 5px * var(--amp)) var(--accent-subtle-strong);
+  transition: box-shadow 100ms ease-out;
+}
+
+@keyframes bubble-breathe {
+  0%,
+  100% {
+    transform: scale(1);
+  }
+  50% {
+    transform: scale(calc(1 + 0.015 + var(--amp) * 0.025));
+  }
+}
+
+.bubble__rec-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--danger);
+  flex-shrink: 0;
+  animation: rec-dot-blink 1.4s ease-in-out infinite;
+}
+
+@keyframes rec-dot-blink {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.3;
+  }
+}
+
 .waveform {
   display: flex;
   align-items: center;
@@ -51,6 +91,26 @@ body,
   border-radius: 2px;
   background: rgba(255, 255, 255, 0.85);
   transition: height 90ms linear;
+  transform-origin: center;
+  /* Idle baseline "breathing" so the waveform visibly lives even in
+     silence; staggered per-bar via --i (set in Bubble.tsx) so it ripples
+     rather than pulsing in lockstep. Animates transform/opacity (not
+     height) so it layers on top of the amplitude-driven inline height
+     instead of fighting it. */
+  animation: waveform-idle 1.6s ease-in-out infinite;
+  animation-delay: calc(var(--i, 0) * 70ms);
+}
+
+@keyframes waveform-idle {
+  0%,
+  100% {
+    transform: scaleY(0.85);
+    opacity: 0.7;
+  }
+  50% {
+    transform: scaleY(1);
+    opacity: 1;
+  }
 }
 
 .bubble__timer {
