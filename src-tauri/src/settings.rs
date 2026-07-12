@@ -89,6 +89,11 @@ impl Settings {
     /// edit (or a compromised renderer) can't redirect the STT/cleanup calls —
     /// notably the Groq call, which carries the API key — to an arbitrary host.
     pub fn sanitized(mut self) -> Self {
+        // rdev named right-ctrl "Unknown(62)"; the macOS tap now emits
+        // "ControlRight" for the same key, so old settings still resolve.
+        if self.hotkey == "Unknown(62)" {
+            self.hotkey = "ControlRight".into();
+        }
         if self.groq_url != "https://api.groq.com" && !is_local_http(&self.groq_url) {
             self.groq_url = Settings::default().groq_url;
         }
@@ -204,6 +209,20 @@ mod tests {
         std::env::remove_var("GROQ_API_KEY");
         let s = Settings::default();
         assert_eq!(groq_api_key(&s), None);
+    }
+
+    #[test]
+    fn unknown_62_hotkey_migrates_to_control_right() {
+        let s = Settings { hotkey: "Unknown(62)".into(), ..Settings::default() };
+        assert_eq!(s.sanitized().hotkey, "ControlRight");
+    }
+
+    #[test]
+    fn other_hotkeys_pass_through_unchanged() {
+        let s = Settings { hotkey: "ControlRight".into(), ..Settings::default() };
+        assert_eq!(s.clone().sanitized().hotkey, "ControlRight");
+        let s = Settings { hotkey: "Unknown(63)".into(), ..s };
+        assert_eq!(s.sanitized().hotkey, "Unknown(63)");
     }
 
     #[test]

@@ -48,8 +48,11 @@ where
     let callback = Mutex::new(callback);
 
     // Modifier keys report only FlagsChanged, with no down/up flag of their
-    // own: a keycode already in this set means the event is that key's
-    // release, otherwise it's a press.
+    // own. Keycodes with a device-dependent bit (see `device_mask`) read
+    // down/up straight off the event flags. The two that don't (CapsLock,
+    // Function) fall back to toggling membership in this set; it's cleared
+    // whenever the tap is disabled so a missed transition during the gap
+    // can't invert the toggle permanently.
     let held_modifiers: Mutex<HashSet<i64>> = Mutex::new(HashSet::new());
 
     // Filled in right after the tap is created, so the callback can
@@ -66,6 +69,10 @@ where
         move |_proxy, etype, event| {
             match etype {
                 CGEventType::TapDisabledByTimeout | CGEventType::TapDisabledByUserInput => {
+                    // A gap here can straddle a CapsLock/Function transition
+                    // the fallback toggle never saw; drop what it thinks it
+                    // knows rather than risk a permanently inverted state.
+                    held_modifiers.lock().unwrap().clear();
                     let addr = mach_port_addr_cb.load(Ordering::SeqCst);
                     if addr != 0 {
                         unsafe { CGEventTapEnable(addr as CFMachPortRef, true) };
@@ -85,17 +92,19 @@ where
                 }
                 CGEventType::FlagsChanged => {
                     let code = event.get_integer_value_field(EventField::KEYBOARD_EVENT_KEYCODE);
-                    let is_release = {
+                    let is_down = if let Some(mask) = device_mask(code) {
+                        (event.get_flags().bits() & mask) != 0
+                    } else {
                         let mut held = held_modifiers.lock().unwrap();
                         let was_held = held.remove(&code);
                         if !was_held {
                             held.insert(code);
                         }
-                        was_held
+                        !was_held
                     };
                     let name = key_name(code);
                     let mut cb = callback.lock().unwrap();
-                    (*cb)(if is_release { TapEvent::Up(name) } else { TapEvent::Down(name) });
+                    (*cb)(if is_down { TapEvent::Down(name) } else { TapEvent::Up(name) });
                 }
                 _ => {}
             }
@@ -114,6 +123,26 @@ where
     tap.enable();
     CFRunLoop::run_current();
     Ok(())
+}
+
+/// Device-dependent modifier bit for keycodes that have a left/right split,
+/// per `NX_DEVICE*KEYMASK` in Apple's IOLLEvent.h (IOHIDFamily). Distinct
+/// from the coarse device-independent bits CGEventFlags exposes as named
+/// constants (Shift/Control/Command/...), which don't tell left from right;
+/// these are read straight off the raw flags word instead. CapsLock (57) and
+/// Function (63) have no such bit and aren't listed here.
+fn device_mask(code: i64) -> Option<u64> {
+    match code {
+        59 => Some(0x00000001), // ControlLeft
+        56 => Some(0x00000002), // ShiftLeft
+        60 => Some(0x00000004), // ShiftRight
+        55 => Some(0x00000008), // MetaLeft
+        54 => Some(0x00000010), // MetaRight
+        58 => Some(0x00000020), // Alt (left option)
+        61 => Some(0x00000040), // AltGr (right option)
+        62 => Some(0x00002000), // ControlRight
+        _ => None,
+    }
 }
 
 /// Maps a macOS virtual keycode to the same name rdev's `Key` Debug format
@@ -227,5 +256,30 @@ mod tests {
     #[test]
     fn unknown_keycode_still_capturable() {
         assert_eq!(key_name(9999), "Unknown(9999)");
+    }
+
+    #[test]
+    fn device_mask_matches_ioll_event_nx_device_masks() {
+        assert_eq!(device_mask(59), Some(0x00000001)); // ControlLeft
+        assert_eq!(device_mask(56), Some(0x00000002)); // ShiftLeft
+        assert_eq!(device_mask(60), Some(0x00000004)); // ShiftRight
+        assert_eq!(device_mask(55), Some(0x00000008)); // MetaLeft
+        assert_eq!(device_mask(54), Some(0x00000010)); // MetaRight
+        assert_eq!(device_mask(58), Some(0x00000020)); // Alt
+        assert_eq!(device_mask(61), Some(0x00000040)); // AltGr
+        assert_eq!(device_mask(62), Some(0x00002000)); // ControlRight
+    }
+
+    #[test]
+    fn device_mask_none_for_toggle_fallback_keys() {
+        // CapsLock and Function have no device-dependent bit; they keep
+        // using the held-keycode toggle fallback.
+        assert_eq!(device_mask(57), None);
+        assert_eq!(device_mask(63), None);
+    }
+
+    #[test]
+    fn device_mask_none_for_unrelated_keycode() {
+        assert_eq!(device_mask(0), None);
     }
 }
