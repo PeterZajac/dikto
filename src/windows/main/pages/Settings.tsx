@@ -279,12 +279,14 @@ export default function SettingsPage() {
   const [groqTest, setGroqTest] = useState<"idle" | "testing" | "ok" | "fail">("idle");
   const groqSavedTimer = useRef<number | undefined>(undefined);
 
-  useEffect(() => {
+  const refreshGroqKeyStatus = useCallback(() => {
     api
       .hasGroqKey()
       .then(setHasGroqKey)
       .catch(() => {});
   }, []);
+
+  useEffect(refreshGroqKeyStatus, [refreshGroqKeyStatus]);
   useEffect(() => () => window.clearTimeout(groqSavedTimer.current), []);
 
   const saveGroqKey = () => {
@@ -294,10 +296,10 @@ export default function SettingsPage() {
     api
       .setGroqKey(key)
       .then(() => {
-        setHasGroqKey(true);
         setGroqDraft("");
         setGroqTest("idle");
         setGroqSaved(true);
+        refreshGroqKeyStatus();
         window.clearTimeout(groqSavedTimer.current);
         groqSavedTimer.current = window.setTimeout(() => setGroqSaved(false), GROQ_SAVED_FLASH_MS);
       })
@@ -460,7 +462,11 @@ export default function SettingsPage() {
         </div>
 
         <div className="settings-row settings-row--column">
-          <span className="settings-row__label">Model</span>
+          <span className="settings-row__label">Claude model</span>
+          <span className="settings-row__desc">
+            Čistenie prepísaného textu — interpunkcia, výplňové slová. Beží cez Meridian (tvoje Claude
+            predplatné), nie cez Groq.
+          </span>
           <div className="settings-row__control">
             <input
               className="field"
@@ -509,10 +515,18 @@ export default function SettingsPage() {
       <section className="settings-section">
         <div className="settings-section__head">
           <h2 className="settings-section__title">Groq API kľúč</h2>
-          <p className="settings-section__desc">Potrebný pre prepis reči cez Groq Whisper.</p>
+          <p className="settings-section__desc">
+            Prepis reči na text (Whisper cez Groq). Zadarmo na console.groq.com.
+          </p>
         </div>
         <div className="settings-row settings-row--column">
           <span className="settings-row__label">API kľúč</span>
+          {hasGroqKey && (
+            <span className="status-line">
+              <span className="status-dot status-dot--ok" aria-hidden />
+              Kľúč je uložený v systémovom keychaine
+            </span>
+          )}
           <div className="settings-row__control">
             <div className="field-row">
               <input
@@ -520,7 +534,7 @@ export default function SettingsPage() {
                 className="field"
                 value={groqDraft}
                 onChange={(e) => setGroqDraft(e.target.value)}
-                placeholder={hasGroqKey ? "••••••••••••" : "gsk_…"}
+                placeholder={hasGroqKey ? "•••••••• (uložený — vlož nový pre zmenu)" : "gsk_…"}
                 autoComplete="off"
                 spellCheck={false}
               />
@@ -545,7 +559,7 @@ export default function SettingsPage() {
         </div>
         <div className="settings-row settings-row--tight">
           <span className={`inline-note${groqTest === "fail" ? "" : " inline-note--muted"}`}>
-            {groqTestNote(groqSaved, groqTest, hasGroqKey)}
+            {groqTestNote(groqSaved, groqTest)}
           </span>
         </div>
       </section>
@@ -573,12 +587,12 @@ export default function SettingsPage() {
   );
 }
 
-function groqTestNote(saved: boolean, test: "idle" | "testing" | "ok" | "fail", hasKey: boolean): string {
+function groqTestNote(saved: boolean, test: "idle" | "testing" | "ok" | "fail"): string {
   if (saved) return "kľúč bol uložený";
   if (test === "testing") return "testujem spojenie…";
   if (test === "ok") return "✓ spojenie funguje";
   if (test === "fail") return "✗ spojenie zlyhalo";
-  return hasKey ? "kľúč je uložený" : "";
+  return "";
 }
 
 function humanizeKey(key: string): string {
