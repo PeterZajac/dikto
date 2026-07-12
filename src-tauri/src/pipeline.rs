@@ -281,7 +281,7 @@ pub async fn transcribe_and_deliver(ctx: Arc<AppCtx>, wav: Vec<u8>, gen: u64, du
                 &ctx,
                 gen,
                 Event::Failed,
-                Some(&format!("vloženie zlyhalo — text je v schránke (Cmd+V). {e}")),
+                Some(&format!("vloženie zlyhalo — text je v schránke (Cmd/Ctrl+V). {e}")),
             );
         }
     }
