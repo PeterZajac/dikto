@@ -11,11 +11,34 @@ import { EVENT_HOTKEY_CAPTURED, EVENT_SETTINGS_CHANGED, type HotkeyCapturedPaylo
 import "./settings.css";
 
 const CAPTURE_TIMEOUT_MS = 10_000;
+const CAPTURE_STALL_HINT_MS = 3_000;
 const DEBOUNCE_MS = 500;
 const MERIDIAN_POLL_MS = 10_000;
 const GROQ_SAVED_FLASH_MS = 2_500;
 
 type MeridianStatus = "unknown" | "online" | "offline";
+
+// KeyboardEvent.code -> rdev's Key Debug string (verified against rdev 0.5.3's
+// `Key` enum, ~/.cargo/registry/src/.../rdev-0.5.3/src/rdev.rs). Fallback path
+// for when the Rust rdev listener dies silently (stale Accessibility TCC
+// grant) — see hotkey.rs `capture_next` / `hotkey:captured`.
+const CODE_TO_RDEV: Record<string, string> = {
+  AltLeft: "Alt",
+  AltRight: "AltGr", // right Option on mac; rdev has no separate AltRight variant
+  ControlLeft: "ControlLeft",
+  ControlRight: "ControlRight",
+  MetaLeft: "MetaLeft",
+  MetaRight: "MetaRight",
+  ShiftLeft: "ShiftLeft",
+  ShiftRight: "ShiftRight",
+  Space: "Space",
+};
+for (let i = 1; i <= 12; i++) CODE_TO_RDEV[`F${i}`] = `F${i}`;
+for (let c = 65; c <= 90; c++) {
+  const letter = String.fromCharCode(c);
+  CODE_TO_RDEV[`Key${letter}`] = `Key${letter}`;
+}
+for (let d = 0; d <= 9; d++) CODE_TO_RDEV[`Digit${d}`] = `Num${d}`;
 
 const LANGUAGE_OPTIONS: Array<{ id: LanguageMode; label: string }> = [
   { id: "auto", label: "Auto" },
@@ -86,27 +109,49 @@ export default function SettingsPage() {
 
   // ---- hotkey capture ----
   const [capturing, setCapturing] = useState(false);
+  const [captureStalled, setCaptureStalled] = useState(false);
   const captureTimeoutRef = useRef<number | undefined>(undefined);
+  const captureStallRef = useRef<number | undefined>(undefined);
+  // Whichever source (Rust `hotkey:captured` event or the DOM keydown
+  // fallback below) reports a key first wins the race; this ref guards
+  // against both firing for the same physical keypress.
+  const captureWonRef = useRef(false);
 
   const exitCapture = useCallback((disarmBackend: boolean) => {
     window.clearTimeout(captureTimeoutRef.current);
+    window.clearTimeout(captureStallRef.current);
     setCapturing(false);
+    setCaptureStalled(false);
     if (disarmBackend) void api.hotkeyCaptureStart(true);
   }, []);
 
+  const finishCapture = useCallback(
+    (key: string) => {
+      window.clearTimeout(captureTimeoutRef.current);
+      window.clearTimeout(captureStallRef.current);
+      setCapturing(false);
+      setCaptureStalled(false);
+      commit({ hotkey: key });
+    },
+    [commit],
+  );
+
   const startCapture = () => {
+    captureWonRef.current = false;
+    setCaptureStalled(false);
     setCapturing(true);
     void api.hotkeyCaptureStart(false);
     captureTimeoutRef.current = window.setTimeout(() => exitCapture(true), CAPTURE_TIMEOUT_MS);
+    captureStallRef.current = window.setTimeout(() => setCaptureStalled(true), CAPTURE_STALL_HINT_MS);
   };
 
   useEffect(() => {
     let cancelled = false;
     let unlisten: (() => void) | undefined;
     listen<HotkeyCapturedPayload>(EVENT_HOTKEY_CAPTURED, (event) => {
-      window.clearTimeout(captureTimeoutRef.current);
-      setCapturing(false);
-      commit({ hotkey: event.payload.key });
+      if (captureWonRef.current) return;
+      captureWonRef.current = true;
+      finishCapture(event.payload.key);
     }).then((u) => {
       if (cancelled) u();
       else unlisten = u;
@@ -115,21 +160,42 @@ export default function SettingsPage() {
       cancelled = true;
       unlisten?.();
     };
-  }, [commit]);
+  }, [finishCapture]);
 
-  // Escape cancels instantly from the UI's point of view. rdev also clears
-  // its own flag silently on Escape (see hotkey.rs) — this listener just
-  // avoids making the user wait out the 10s timeout for visual feedback.
+  // DOM fallback: the global rdev listener thread can die silently (e.g. a
+  // stale Accessibility TCC grant), leaving the Rust `hotkey:captured` event
+  // never firing. While capturing, also read raw browser keydowns so the UI
+  // still works even when the OS-level listener is dead. Escape cancels.
   useEffect(() => {
     if (!capturing) return;
     const onKeyDown = (e: KeyboardEvent) => {
-      if (e.key === "Escape") exitCapture(true);
+      if (e.key === "Escape") {
+        e.preventDefault();
+        exitCapture(true);
+        return;
+      }
+      const rdevName = CODE_TO_RDEV[e.code];
+      if (!rdevName || captureWonRef.current) return;
+      e.preventDefault();
+      captureWonRef.current = true;
+      finishCapture(rdevName);
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [capturing, exitCapture]);
+  }, [capturing, exitCapture, finishCapture]);
 
-  useEffect(() => () => window.clearTimeout(captureTimeoutRef.current), []);
+  // Whenever capture mode ends — success, Escape, timeout, or the component
+  // unmounting mid-capture (e.g. navigating to another page) — make sure the
+  // Rust one-shot `capture_next` flag doesn't linger armed.
+  useEffect(() => {
+    if (!capturing) return;
+    return () => void api.hotkeyCaptureStart(true);
+  }, [capturing]);
+
+  useEffect(() => () => {
+    window.clearTimeout(captureTimeoutRef.current);
+    window.clearTimeout(captureStallRef.current);
+  }, []);
 
   // ---- language ----
   const setLanguage = (language: LanguageMode) => commit({ language });
@@ -323,6 +389,18 @@ export default function SettingsPage() {
             )}
           </div>
         </div>
+        {capturing && captureStalled && (
+          <div className="settings-row settings-row--tight">
+            <span className="inline-note">Klávesa nezachytená? Skontroluj povolenie Prístupnosť</span>
+            <button
+              type="button"
+              className="btn"
+              onClick={() => void api.openPrivacySettings("accessibility")}
+            >
+              Otvoriť nastavenia
+            </button>
+          </div>
+        )}
       </section>
 
       <section className="settings-section">
