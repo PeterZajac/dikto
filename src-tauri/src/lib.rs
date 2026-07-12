@@ -4,6 +4,8 @@ mod commands;
 mod history;
 mod hotkey;
 mod inject;
+#[cfg(target_os = "macos")]
+mod macos_tap;
 mod pipeline;
 mod settings;
 mod state;

@@ -134,14 +134,11 @@ pub fn spawn(
             // swallowed; releases of any other key (e.g. a hotkey the user
             // was already holding) still flow through to interpretation.
             let mut swallow_release_of: Option<String> = None;
-            let result = rdev::listen(move |ev| {
-                let key_name = match ev.event_type {
-                    rdev::EventType::KeyPress(k) => Some((format!("{k:?}"), true)),
-                    rdev::EventType::KeyRelease(k) => Some((format!("{k:?}"), false)),
-                    _ => None,
-                };
-                let Some((name, is_down)) = key_name else { return };
-
+            // Shared between both event sources below — only where the key
+            // events come from (rdev vs. a raw CGEventTap) differs per OS;
+            // once we have a (name, is_down) pair the interpretation is the
+            // same everywhere.
+            let mut handle_event = move |name: String, is_down: bool| {
                 if is_down && capture_next.swap(false, Ordering::SeqCst) {
                     swallow_release_of = Some(name.clone());
                     if name != "Escape" {
@@ -165,7 +162,34 @@ pub fn spawn(
                     // hotkey; pipeline ignores Cancel while Idle.
                     let _ = tx_esc.send(HotkeySignal::Cancel);
                 }
+            };
+
+            // rdev's macOS listener calls into HIToolbox
+            // (Keyboard::create_string_for_key) on every KeyPress, which
+            // asserts main-thread on macOS 15 and crashes the app the first
+            // time this thread sees a key. macos_tap.rs never touches
+            // HIToolbox, so macOS gets its own event source; every other
+            // platform keeps using rdev as before.
+            #[cfg(target_os = "macos")]
+            let result = crate::macos_tap::listen(move |ev| {
+                let (name, is_down) = match ev {
+                    crate::macos_tap::TapEvent::Down(n) => (n, true),
+                    crate::macos_tap::TapEvent::Up(n) => (n, false),
+                };
+                handle_event(name, is_down);
             });
+
+            #[cfg(not(target_os = "macos"))]
+            let result = rdev::listen(move |ev| {
+                let key_name = match ev.event_type {
+                    rdev::EventType::KeyPress(k) => Some((format!("{k:?}"), true)),
+                    rdev::EventType::KeyRelease(k) => Some((format!("{k:?}"), false)),
+                    _ => None,
+                };
+                let Some((name, is_down)) = key_name else { return };
+                handle_event(name, is_down);
+            });
+
             if let Err(e) = result {
                 eprintln!("hotkey listener failed: {e:?} (missing Accessibility permission?)");
                 on_dead(
