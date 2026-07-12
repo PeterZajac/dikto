@@ -34,6 +34,15 @@ impl Interpreter {
         Self { mode: Mode::Idle }
     }
 
+    /// Forces the interpreter back to Idle. Used when the pipeline moves to
+    /// Idle for a reason the interpreter itself didn't decide (Esc cancel,
+    /// the 300s auto-stop) — without this, the physical key state it tracks
+    /// (e.g. Locked with no key held) would desync from the pipeline and eat
+    /// the next real press.
+    pub fn reset(&mut self) {
+        self.mode = Mode::Idle;
+    }
+
     pub fn key_down(&mut self, t: u128) -> Action {
         match self.mode {
             Mode::Idle => {
@@ -105,7 +114,7 @@ pub fn spawn(
     capture_next: Arc<AtomicBool>,
     on_dead: Box<dyn Fn(String) + Send>,
     on_captured: Box<dyn Fn(String) + Send>,
-) {
+) -> Arc<std::sync::Mutex<Interpreter>> {
     let interp = Arc::new(std::sync::Mutex::new(Interpreter::new()));
 
     {
@@ -169,13 +178,16 @@ pub fn spawn(
     }
 
     // tick thread
+    let interp_for_tick = interp.clone();
     std::thread::spawn(move || loop {
         std::thread::sleep(std::time::Duration::from_millis(50));
-        let a = interp.lock().unwrap().tick(now_ms());
+        let a = interp_for_tick.lock().unwrap().tick(now_ms());
         if a == Action::Stop {
             let _ = tx.send(HotkeySignal::Stop);
         }
     });
+
+    interp
 }
 
 #[cfg(test)]
@@ -217,5 +229,25 @@ mod tests {
         i.key_down(0);
         i.key_up(500); // ptt stop
         assert_eq!(i.key_down(1000), Action::Start);
+    }
+
+    #[test]
+    fn reset_from_locked_lets_next_key_down_start() {
+        let mut i = Interpreter::new();
+        i.key_down(0);
+        i.key_up(100); // tap → armed
+        i.key_down(200); // 2nd tap → locked
+        i.key_up(280);
+        i.reset(); // pipeline-side cancel/auto-stop while physically Locked
+        assert_eq!(i.key_down(1000), Action::Start);
+    }
+
+    #[test]
+    fn reset_from_tap_armed_suppresses_phantom_stop_on_tick() {
+        let mut i = Interpreter::new();
+        i.key_down(0);
+        i.key_up(100); // tap → armed, waiting for a 2nd tap or window expiry
+        i.reset();
+        assert_eq!(i.tick(1000), Action::None);
     }
 }

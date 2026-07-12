@@ -37,6 +37,11 @@ pub struct AppCtx {
     /// Set once by `build_tray` after the menu is built; `None` until then.
     /// `apply_settings` uses it to refresh the tray's language checkmarks.
     pub tray_lang_items: Mutex<Option<TrayLangItems>>,
+    /// The hotkey listener's tap/lock interpreter. The pipeline resets it
+    /// whenever it moves to Idle for a reason the interpreter didn't decide
+    /// (Esc cancel, 300s auto-stop) so the physical key state it tracks can't
+    /// desync from the pipeline and eat the next real press.
+    pub hotkey_interp: Arc<Mutex<crate::hotkey::Interpreter>>,
 }
 
 /// Applies an event raised by async work belonging to a specific take. If
@@ -98,6 +103,20 @@ pub(crate) fn begin(ctx: &AppCtx, ev: Event, new_take: bool, message: Option<&st
     Some(gen)
 }
 
+/// Stashes `wav` in `ctx.pending_wav` iff `gen` is still the current take,
+/// checked and written atomically under `ctx.phase` (the gen authority) so a
+/// take that starts between a separate check-then-write can't have its
+/// pending audio clobbered by a stale failure from the previous one. Returns
+/// whether the write happened.
+fn store_pending_if_current(ctx: &AppCtx, gen: u64, wav: Vec<u8>) -> bool {
+    let _phase_guard = ctx.phase.lock().unwrap();
+    if ctx.take_gen.load(Ordering::SeqCst) != gen {
+        return false;
+    }
+    *ctx.pending_wav.lock().unwrap() = Some(wav);
+    true
+}
+
 fn show_bubble(ctx: &AppCtx) {
     if let Some(w) = ctx.app.get_webview_window("bubble") {
         let saved = ctx.settings.read().unwrap().bubble_pos;
@@ -106,12 +125,19 @@ fn show_bubble(ctx: &AppCtx) {
     }
 }
 
-fn hide_bubble_after(ctx: &Arc<AppCtx>, ms: u64) {
+/// `gen` is the take that scheduled this hide. A newer take starting (and
+/// possibly finishing) during `ms` would flip the phase back to Idle for a
+/// different take — checking phase alone isn't enough, so take_gen must also
+/// still match under the same phase-lock hold before we hide the bubble.
+fn hide_bubble_after(ctx: &Arc<AppCtx>, gen: u64, ms: u64) {
     let ctx = ctx.clone();
     tauri::async_runtime::spawn(async move {
         tokio::time::sleep(std::time::Duration::from_millis(ms)).await;
-        // Only hide when we're back to Idle (a new take may have started).
-        if *ctx.phase.lock().unwrap() == Phase::Idle {
+        let should_hide = {
+            let guard = ctx.phase.lock().unwrap();
+            *guard == Phase::Idle && ctx.take_gen.load(Ordering::SeqCst) == gen
+        };
+        if should_hide {
             if let Some(w) = ctx.app.get_webview_window("bubble") {
                 let _ = w.hide();
             }
@@ -163,9 +189,13 @@ pub fn cancel(ctx: &Arc<AppCtx>) {
     // Gen only bumps (and recorder only stops) on a legal transition —
     // otherwise (e.g. Esc during Injecting, where Cancel is illegal) we'd
     // invalidate the in-flight take's gen while its phase stays put, wedging it.
-    if begin(ctx, Event::Cancel, true, None).is_some() {
+    if let Some(gen) = begin(ctx, Event::Cancel, true, None) {
         let _ = ctx.recorder.stop();
-        hide_bubble_after(ctx, 0);
+        hide_bubble_after(ctx, gen, 0);
+        // This Cancel didn't come from the hotkey interpreter (Esc, or a
+        // command-driven cancel) — resync it to Idle so a stale Locked/
+        // TapArmed mode doesn't eat the next real key press.
+        ctx.hotkey_interp.lock().unwrap().reset();
     }
 }
 
@@ -179,7 +209,7 @@ async fn finish(ctx: Arc<AppCtx>, gen: u64) {
     // < 0.4 s of audio → treat as silence.
     if samples.len() < (rate as usize * ch as usize) * 2 / 5 {
         if advance(&ctx, gen, Event::Cancel, Some("nič som nepočul")) {
-            hide_bubble_after(&ctx, 1200);
+            hide_bubble_after(&ctx, gen, 1200);
         }
         return;
     }
@@ -203,9 +233,7 @@ pub async fn transcribe_and_deliver(ctx: Arc<AppCtx>, wav: Vec<u8>, gen: u64, du
     let Some(api_key) = settings::groq_api_key() else {
         // Only keep the audio if we're still the take in charge — a stale
         // failure landing late must not clobber a newer take's saved audio.
-        if ctx.take_gen.load(Ordering::SeqCst) == gen {
-            *ctx.pending_wav.lock().unwrap() = Some(wav);
-        }
+        store_pending_if_current(&ctx, gen, wav);
         advance(&ctx, gen, Event::Failed, Some("chýba Groq API kľúč"));
         return;
     };
@@ -215,16 +243,14 @@ pub async fn transcribe_and_deliver(ctx: Arc<AppCtx>, wav: Vec<u8>, gen: u64, du
     let transcript = match stt.transcribe(wav.clone(), lang).await {
         Ok(t) => t,
         Err(e) => {
-            if ctx.take_gen.load(Ordering::SeqCst) == gen {
-                *ctx.pending_wav.lock().unwrap() = Some(wav);
-            }
+            store_pending_if_current(&ctx, gen, wav);
             advance(&ctx, gen, Event::Failed, Some(&format!("prepis zlyhal: {e}")));
             return;
         }
     };
     if transcript.text.is_empty() {
         if advance(&ctx, gen, Event::Cancel, Some("nič som nepočul")) {
-            hide_bubble_after(&ctx, 1200);
+            hide_bubble_after(&ctx, gen, 1200);
         }
         return;
     }
@@ -270,7 +296,7 @@ pub async fn transcribe_and_deliver(ctx: Arc<AppCtx>, wav: Vec<u8>, gen: u64, du
                 duration_ms,
             );
             if advance(&ctx, gen, Event::Injected, Some(note.unwrap_or("✓ vložené"))) {
-                hide_bubble_after(&ctx, 1200);
+                hide_bubble_after(&ctx, gen, 1200);
             }
         }
         Err(e) => {
@@ -315,6 +341,11 @@ fn spawn_partial_loop(ctx: Arc<AppCtx>, gen: u64) {
             let elapsed = ctx.recorder.duration_secs();
             if !auto_stop_fired && elapsed > MAX_TAKE_SECS {
                 auto_stop_fired = true;
+                // The synthetic Stop below doesn't come from the interpreter,
+                // but in Locked mode no key is physically held — reset now so
+                // a later real key-down starts a fresh take instead of being
+                // read against a stale Locked/TapArmed mode.
+                ctx.hotkey_interp.lock().unwrap().reset();
                 let ctx2 = ctx.clone();
                 // handle_signal is sync and does its own async spawn; run it
                 // off the tokio executor. Guarded by auto_stop_fired so a

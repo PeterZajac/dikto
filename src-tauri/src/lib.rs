@@ -62,10 +62,28 @@ pub fn run() {
 
             let data_dir = app.path().app_data_dir().expect("app data dir");
             std::fs::create_dir_all(&data_dir).expect("create app data dir");
-            let history = history::HistoryStore::open(&data_dir.join("history.sqlite"))
-                .expect("open history db");
+            let history = history::HistoryStore::open_or_recover(&data_dir.join("history.sqlite"));
 
             let capture_next = Arc::new(AtomicBool::new(false));
+
+            let (tx, rx) = mpsc::channel::<hotkey::HotkeySignal>();
+            let dead_app = app.handle().clone();
+            let captured_app = app.handle().clone();
+            let hotkey_interp = hotkey::spawn(
+                hotkey_name.clone(),
+                tx,
+                capture_next.clone(),
+                Box::new(move |message: String| {
+                    let _ = dead_app.emit("dictation:pipeline-dead", serde_json::json!({ "message": message }));
+                    if let Some(win) = dead_app.get_webview_window("main") {
+                        let _ = win.show();
+                        let _ = win.set_focus();
+                    }
+                }),
+                Box::new(move |key: String| {
+                    let _ = captured_app.emit("hotkey:captured", serde_json::json!({ "key": key }));
+                }),
+            );
 
             let ctx = Arc::new(AppCtx {
                 phase: Mutex::new(state::Phase::Idle),
@@ -80,6 +98,7 @@ pub fn run() {
                 history,
                 capture_next: capture_next.clone(),
                 tray_lang_items: Mutex::new(None),
+                hotkey_interp,
             });
             app.manage(ctx.clone());
 
@@ -148,24 +167,6 @@ pub fn run() {
                 });
             }
 
-            let (tx, rx) = mpsc::channel::<hotkey::HotkeySignal>();
-            let dead_app = app.handle().clone();
-            let captured_app = app.handle().clone();
-            hotkey::spawn(
-                hotkey_name,
-                tx,
-                capture_next,
-                Box::new(move |message: String| {
-                    let _ = dead_app.emit("dictation:pipeline-dead", serde_json::json!({ "message": message }));
-                    if let Some(win) = dead_app.get_webview_window("main") {
-                        let _ = win.show();
-                        let _ = win.set_focus();
-                    }
-                }),
-                Box::new(move |key: String| {
-                    let _ = captured_app.emit("hotkey:captured", serde_json::json!({ "key": key }));
-                }),
-            );
             std::thread::spawn(move || {
                 while let Ok(sig) = rx.recv() {
                     pipeline::handle_signal(ctx.clone(), sig);
