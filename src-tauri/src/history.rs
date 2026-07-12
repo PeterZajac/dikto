@@ -32,6 +32,11 @@ impl HistoryStore {
     /// `dictations` table exists.
     pub fn open(path: &Path) -> rusqlite::Result<Self> {
         let conn = Connection::open(path)?;
+        Self::init_schema(&conn)?;
+        Ok(Self(Mutex::new(conn)))
+    }
+
+    fn init_schema(conn: &Connection) -> rusqlite::Result<()> {
         conn.execute(
             "CREATE TABLE IF NOT EXISTS dictations (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -43,7 +48,33 @@ impl HistoryStore {
             )",
             [],
         )?;
-        Ok(Self(Mutex::new(conn)))
+        Ok(())
+    }
+
+    /// Opens `path`, recovering from a corrupt DB instead of bricking the app:
+    /// on open/schema failure, rename the bad file aside and retry once; if
+    /// that also fails, fall back to a non-persistent in-memory store so
+    /// dictation still works for the rest of the session.
+    pub fn open_or_recover(path: &Path) -> Self {
+        if let Ok(store) = Self::open(path) {
+            return store;
+        }
+        let corrupt_path = path.with_extension("sqlite.corrupt");
+        let _ = std::fs::rename(path, &corrupt_path);
+        if let Ok(store) = Self::open(path) {
+            eprintln!(
+                "history db was corrupt, moved to {} and reopened",
+                corrupt_path.display()
+            );
+            return store;
+        }
+        eprintln!(
+            "history db unrecoverable at {}, falling back to in-memory (not persisted)",
+            path.display()
+        );
+        let conn = Connection::open_in_memory().expect("open in-memory sqlite connection");
+        Self::init_schema(&conn).expect("init in-memory schema");
+        Self(Mutex::new(conn))
     }
 
     pub fn insert(
@@ -112,6 +143,22 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let store = HistoryStore::open(&dir.path().join("history.sqlite")).unwrap();
         (dir, store)
+    }
+
+    #[test]
+    fn open_or_recover_replaces_corrupt_db_and_still_works() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("history.sqlite");
+        std::fs::write(&path, b"not a sqlite file").unwrap();
+
+        let store = HistoryStore::open_or_recover(&path);
+        store.insert("hello", "Hello.", None, 100).unwrap();
+        let items = store.list(None, 10).unwrap();
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].raw, "hello");
+
+        assert!(dir.path().join("history.sqlite.corrupt").exists());
+        assert!(Connection::open(&path).is_ok());
     }
 
     #[test]
