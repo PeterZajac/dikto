@@ -230,7 +230,7 @@ pub async fn transcribe_and_deliver(ctx: Arc<AppCtx>, wav: Vec<u8>, gen: u64, du
             s.cleanup_style,
         )
     };
-    let Some(api_key) = settings::groq_api_key() else {
+    let Some(api_key) = settings::groq_api_key(&ctx.settings.read().unwrap()) else {
         // Only keep the audio if we're still the take in charge — a stale
         // failure landing late must not clobber a newer take's saved audio.
         store_pending_if_current(&ctx, gen, wav);
@@ -375,7 +375,7 @@ fn spawn_partial_loop(ctx: Arc<AppCtx>, gen: u64) {
                 let s = ctx.settings.read().unwrap();
                 (s.groq_url.clone(), s.language.code())
             };
-            let Some(api_key) = settings::groq_api_key() else {
+            let Some(api_key) = settings::groq_api_key(&ctx.settings.read().unwrap()) else {
                 ctx.partial_inflight.store(false, Ordering::SeqCst);
                 continue;
             };

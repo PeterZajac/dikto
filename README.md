@@ -67,8 +67,8 @@ window's visual styling in particular).
    prompted; the wizard links straight to the right System Settings pane.
 2. **Groq API key** — sign up for a free key at
    [console.groq.com](https://console.groq.com) and paste it in; it's stored
-   in your OS keychain, never in a config file. You can skip this step, but
-   dictation won't work without a key.
+   in the app's local `settings.json` config file (plain text). You can skip
+   this step, but dictation won't work without a key.
 3. **Meridian (optional)** — if you run [Meridian](https://github.com/rynfar/meridian)
    locally (default `http://127.0.0.1:3456`), the app will detect it and use
    it to clean up dictated text via Claude. Skip it and raw transcripts get
@@ -82,9 +82,9 @@ All of this can be revisited later from the Settings page.
   recording; it isn't stored beyond that.
 - **Transcribed text** is sent to Meridian (and from there, Anthropic) only
   if cleanup is enabled and Meridian is reachable.
-- **Everything else** — settings, dictation history, hotkey config — stays
-  in local files and your OS keychain (Groq key). Nothing else leaves the
-  machine.
+- **Everything else** — settings (including the Groq key, stored in plain
+  text), dictation history, hotkey config — stays in local files. Nothing
+  else leaves the machine.
 
 ## Development
 
@@ -103,7 +103,8 @@ platform bundle. Backend tests: `cd src-tauri && cargo test`.
 
 ## Architecture
 
-The Tauri backend (`src-tauri/`) owns a hotkey listener (`rdev`), an audio
+The Tauri backend (`src-tauri/`) owns a hotkey listener (a raw CGEventTap on
+macOS, `rdev` elsewhere), an audio
 recorder (`cpal`), a small state machine driving the dictation phases, and
 clients for Groq (STT) and Meridian (cleanup); a paste step (`enigo`) injects
 the final text via the clipboard. The React frontend (`src/`) renders the

@@ -18,6 +18,7 @@ export interface Settings {
   wizard_done: boolean;
   bubble_pos: [number, number] | null;
   autostart: boolean;
+  groq_api_key: string;
 }
 
 export interface Dictation {

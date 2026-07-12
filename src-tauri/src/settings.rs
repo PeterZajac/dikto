@@ -45,6 +45,10 @@ pub struct Settings {
     pub wizard_done: bool,
     pub bubble_pos: Option<(i32, i32)>,
     pub autostart: bool,
+    /// Groq API key, stored in plain text in settings.json. No OS keychain —
+    /// keeping it here avoids the cross-app keychain prompts that came with
+    /// a system keyring entry.
+    pub groq_api_key: String,
 }
 
 impl Default for Settings {
@@ -60,6 +64,7 @@ impl Default for Settings {
             wizard_done: false,
             bubble_pos: None,
             autostart: false,
+            groq_api_key: String::new(),
         }
     }
 }
@@ -111,32 +116,18 @@ pub fn save(path: &Path, s: &Settings) -> io::Result<()> {
     std::fs::write(path, serde_json::to_string_pretty(s)?)
 }
 
-const KEYRING_SERVICE: &str = "dikto";
-/// Pre-rename keychain service name — checked as a fallback so upgrading
-/// users don't have to re-enter their Groq key.
-const LEGACY_KEYRING_SERVICE: &str = "local-wispr-flow";
-const KEYRING_USER: &str = "groq";
-
-fn keyring_get(service: &str) -> Option<String> {
-    keyring::Entry::new(service, KEYRING_USER).ok()?.get_password().ok()
-}
-
-pub fn groq_api_key() -> Option<String> {
+/// Resolves the Groq API key: env var `GROQ_API_KEY` takes precedence (dev
+/// convenience), falling back to the key stored in `settings.json`.
+pub fn groq_api_key(s: &Settings) -> Option<String> {
     if let Ok(k) = std::env::var("GROQ_API_KEY") {
         if !k.is_empty() {
             return Some(k);
         }
     }
-    if let Some(k) = keyring_get(KEYRING_SERVICE) {
-        return Some(k);
+    if !s.groq_api_key.is_empty() {
+        return Some(s.groq_api_key.clone());
     }
-    let legacy = keyring_get(LEGACY_KEYRING_SERVICE)?;
-    let _ = set_groq_api_key(&legacy); // best-effort migrate to the new service
-    Some(legacy)
-}
-
-pub fn set_groq_api_key(key: &str) -> Result<(), keyring::Error> {
-    keyring::Entry::new(KEYRING_SERVICE, KEYRING_USER)?.set_password(key)
+    None
 }
 
 #[cfg(test)]
@@ -177,6 +168,7 @@ mod tests {
         assert!(!s.wizard_done);
         assert_eq!(s.bubble_pos, None);
         assert!(!s.autostart);
+        assert_eq!(s.groq_api_key, "");
     }
 
     #[test]
@@ -197,6 +189,21 @@ mod tests {
         assert!(!s.wizard_done);
         assert_eq!(s.bubble_pos, None);
         assert!(!s.autostart);
+        assert_eq!(s.groq_api_key, "");
+    }
+
+    #[test]
+    fn groq_api_key_from_settings_when_no_env() {
+        std::env::remove_var("GROQ_API_KEY");
+        let s = Settings { groq_api_key: "gsk_abc".into(), ..Settings::default() };
+        assert_eq!(groq_api_key(&s), Some("gsk_abc".into()));
+    }
+
+    #[test]
+    fn groq_api_key_none_when_both_empty() {
+        std::env::remove_var("GROQ_API_KEY");
+        let s = Settings::default();
+        assert_eq!(groq_api_key(&s), None);
     }
 
     #[test]

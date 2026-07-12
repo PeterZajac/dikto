@@ -28,10 +28,11 @@ pub async fn retry_transcription(ctx: State<'_, Arc<AppCtx>>) -> Result<(), Stri
     Ok(())
 }
 
-/// Dev/setup helper until Plan 2 ships the settings UI.
 #[tauri::command]
-pub fn set_groq_key(key: String) -> Result<(), String> {
-    settings::set_groq_api_key(&key).map_err(|e| e.to_string())
+pub fn set_groq_key(ctx: State<'_, Arc<AppCtx>>, key: String) -> Result<(), String> {
+    let mut new = ctx.settings.read().unwrap().clone();
+    new.groq_api_key = key;
+    apply_settings(ctx.inner(), new)
 }
 
 #[tauri::command]
@@ -81,15 +82,15 @@ pub fn hotkey_capture_start(ctx: State<'_, Arc<AppCtx>>, cancel: bool) {
 }
 
 #[tauri::command]
-pub fn has_groq_key() -> bool {
-    settings::groq_api_key().is_some()
+pub fn has_groq_key(ctx: State<'_, Arc<AppCtx>>) -> bool {
+    settings::groq_api_key(&ctx.settings.read().unwrap()).is_some()
 }
 
 #[tauri::command]
 pub async fn test_groq_key(ctx: State<'_, Arc<AppCtx>>) -> Result<bool, String> {
     let (url, key) = {
         let s = ctx.settings.read().unwrap();
-        (s.groq_url.clone(), settings::groq_api_key().ok_or("chýba kľúč")?)
+        (s.groq_url.clone(), settings::groq_api_key(&s).ok_or("chýba kľúč")?)
     };
     let resp = reqwest::Client::new()
         .get(format!("{}/openai/v1/models", url.trim_end_matches('/')))

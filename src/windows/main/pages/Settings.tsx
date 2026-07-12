@@ -524,7 +524,7 @@ export default function SettingsPage() {
           {hasGroqKey && (
             <span className="status-line">
               <span className="status-dot status-dot--ok" aria-hidden />
-              Kľúč je uložený v systémovom keychaine
+              Kľúč je uložený v lokálnom nastavení
             </span>
           )}
           <div className="settings-row__control">
