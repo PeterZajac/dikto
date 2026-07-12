@@ -64,11 +64,38 @@ impl Default for Settings {
     }
 }
 
+/// True if `url` is `http://` or `https://` pointing at 127.0.0.1 or
+/// localhost (dev/mock servers, no real key ever crosses these).
+fn is_local_http(url: &str) -> bool {
+    ["http://127.0.0.1", "https://127.0.0.1", "http://localhost", "https://localhost"]
+        .iter()
+        .any(|prefix| url.starts_with(prefix))
+}
+
+impl Settings {
+    /// Resets `groq_url`/`meridian_url` to their defaults if they don't match
+    /// an allow-listed shape, so a bad or malicious value from a settings.json
+    /// edit (or a compromised renderer) can't redirect the STT/cleanup calls —
+    /// notably the Groq call, which carries the API key — to an arbitrary host.
+    pub fn sanitized(mut self) -> Self {
+        if self.groq_url != "https://api.groq.com" && !is_local_http(&self.groq_url) {
+            self.groq_url = Settings::default().groq_url;
+        }
+        // Meridian never receives the Groq key — only dictated text — so a
+        // tunneled https:// host is allowed in addition to localhost.
+        if !is_local_http(&self.meridian_url) && !self.meridian_url.starts_with("https://") {
+            self.meridian_url = Settings::default().meridian_url;
+        }
+        self
+    }
+}
+
 pub fn load(path: &Path) -> Settings {
     std::fs::read_to_string(path)
         .ok()
-        .and_then(|s| serde_json::from_str(&s).ok())
+        .and_then(|s| serde_json::from_str::<Settings>(&s).ok())
         .unwrap_or_default()
+        .sanitized()
 }
 
 pub fn save(path: &Path, s: &Settings) -> io::Result<()> {
@@ -155,6 +182,40 @@ mod tests {
         assert!(!s.wizard_done);
         assert_eq!(s.bubble_pos, None);
         assert!(!s.autostart);
+    }
+
+    #[test]
+    fn bad_groq_url_resets_to_default() {
+        let s = Settings { groq_url: "https://evil.example.com".into(), ..Settings::default() };
+        assert_eq!(s.sanitized().groq_url, Settings::default().groq_url);
+    }
+
+    #[test]
+    fn groq_url_localhost_allowed_for_dev_mock() {
+        let s = Settings { groq_url: "http://127.0.0.1:8080".into(), ..Settings::default() };
+        assert_eq!(s.clone().sanitized().groq_url, "http://127.0.0.1:8080");
+        let s = Settings { groq_url: "http://localhost:8080".into(), ..s };
+        assert_eq!(s.sanitized().groq_url, "http://localhost:8080");
+    }
+
+    #[test]
+    fn default_groq_url_passes_sanitized_unchanged() {
+        let s = Settings::default();
+        assert_eq!(s.clone().sanitized(), s);
+    }
+
+    #[test]
+    fn bad_meridian_url_resets_to_default() {
+        let s = Settings { meridian_url: "http://evil.example.com".into(), ..Settings::default() };
+        assert_eq!(s.sanitized().meridian_url, Settings::default().meridian_url);
+    }
+
+    #[test]
+    fn meridian_url_allows_localhost_and_any_https() {
+        let s = Settings { meridian_url: "http://127.0.0.1:3456".into(), ..Settings::default() };
+        assert_eq!(s.clone().sanitized().meridian_url, "http://127.0.0.1:3456");
+        let s = Settings { meridian_url: "https://my-tunnel.example.com".into(), ..s };
+        assert_eq!(s.sanitized().meridian_url, "https://my-tunnel.example.com");
     }
 
     #[test]
