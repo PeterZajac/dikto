@@ -108,6 +108,9 @@ pub fn run() {
                     if let Ok(panel) = bubble.to_panel() {
                         panel.set_style_mask(1 << 7);
                         panel.set_level(25);
+                        // tauri-nspanel re-exports the deprecated `cocoa` crate; no
+                        // objc2-app-kit equivalent is wired through its API yet.
+                        #[allow(deprecated)]
                         panel.set_collection_behaviour(
                             tauri_nspanel::cocoa::appkit::NSWindowCollectionBehavior::from_bits_retain(
                                 (1 << 0) | (1 << 8),

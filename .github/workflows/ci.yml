@@ -1,0 +1,90 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Enable corepack
+        run: corepack enable
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      # dtolnay/rust-toolchain@stable ignores rust-toolchain.toml — it installs
+      # whatever "stable" resolves to for the @rev given, not the pinned channel.
+      # Read the pinned channel ourselves and pass it explicitly via @master.
+      - name: Read pinned Rust toolchain
+        id: toolchain
+        shell: bash
+        run: echo "channel=$(grep '^channel' rust-toolchain.toml | cut -d '"' -f2)" >> "$GITHUB_OUTPUT"
+
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ steps.toolchain.outputs.channel }}
+          components: clippy, rustfmt
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri -> target
+
+      - name: Install frontend deps
+        run: pnpm install --frozen-lockfile
+
+      - name: Build frontend
+        run: pnpm build
+
+      - name: cargo test
+        working-directory: src-tauri
+        run: cargo test
+
+      - name: cargo clippy
+        working-directory: src-tauri
+        run: cargo clippy --all-targets -- -D warnings
+
+  windows-check:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Enable corepack
+        run: corepack enable
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Read pinned Rust toolchain
+        id: toolchain
+        shell: bash
+        run: echo "channel=$(grep '^channel' rust-toolchain.toml | cut -d '"' -f2)" >> "$GITHUB_OUTPUT"
+
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ steps.toolchain.outputs.channel }}
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri -> target
+
+      - name: Install frontend deps
+        run: pnpm install --frozen-lockfile
+
+      # cargo check needs ../dist to exist because tauri-build's build.rs
+      # verifies frontendDist from tauri.conf.json at build time.
+      - name: Build frontend
+        run: pnpm build
+
+      - name: cargo check
+        working-directory: src-tauri
+        run: cargo check

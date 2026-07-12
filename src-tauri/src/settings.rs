@@ -23,17 +23,12 @@ impl LanguageMode {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "lowercase")]
 pub enum CleanupStyle {
+    #[default]
     Light,
     Strong,
-}
-
-impl Default for CleanupStyle {
-    fn default() -> Self {
-        CleanupStyle::Light
-    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
