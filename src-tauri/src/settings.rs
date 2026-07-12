@@ -64,12 +64,18 @@ impl Default for Settings {
     }
 }
 
+/// Check if after a prefix, URL continues with host boundary (`:`, `/`, or EOF).
+fn host_boundary_ok(url: &str, prefix: &str) -> bool {
+    url.strip_prefix(prefix)
+        .is_some_and(|rest| rest.is_empty() || rest.starts_with(':') || rest.starts_with('/'))
+}
+
 /// True if `url` is `http://` or `https://` pointing at 127.0.0.1 or
 /// localhost (dev/mock servers, no real key ever crosses these).
 fn is_local_http(url: &str) -> bool {
     ["http://127.0.0.1", "https://127.0.0.1", "http://localhost", "https://localhost"]
         .iter()
-        .any(|prefix| url.starts_with(prefix))
+        .any(|prefix| host_boundary_ok(url, prefix))
 }
 
 impl Settings {
@@ -224,5 +230,75 @@ mod tests {
         assert_eq!(LanguageMode::Sk.code(), Some("sk"));
         assert_eq!(LanguageMode::Cs.code(), Some("cs"));
         assert_eq!(LanguageMode::En.code(), Some("en"));
+    }
+
+    #[test]
+    fn host_boundary_bypass_127_0_0_1_resets() {
+        // https://127.0.0.1.evil.com should NOT pass: extra dot after host boundary
+        let s = Settings {
+            groq_url: "https://127.0.0.1.evil.com".into(),
+            ..Settings::default()
+        };
+        assert_eq!(s.sanitized().groq_url, Settings::default().groq_url);
+    }
+
+    #[test]
+    fn host_boundary_bypass_localhost_resets() {
+        // http://localhost.evil.gg should NOT pass: extra dot after host boundary
+        let s = Settings {
+            groq_url: "http://localhost.evil.gg".into(),
+            ..Settings::default()
+        };
+        assert_eq!(s.sanitized().groq_url, Settings::default().groq_url);
+    }
+
+    #[test]
+    fn host_boundary_ok_with_port_127() {
+        // http://127.0.0.1:3456 is valid (colon marks port boundary)
+        let s = Settings {
+            groq_url: "http://127.0.0.1:3456".into(),
+            ..Settings::default()
+        };
+        assert_eq!(s.sanitized().groq_url, "http://127.0.0.1:3456");
+    }
+
+    #[test]
+    fn host_boundary_ok_with_path_localhost() {
+        // http://localhost:8080/x is valid (colon and slash mark boundaries)
+        let s = Settings {
+            groq_url: "http://localhost:8080/path".into(),
+            ..Settings::default()
+        };
+        assert_eq!(s.sanitized().groq_url, "http://localhost:8080/path");
+    }
+
+    #[test]
+    fn host_boundary_ok_localhost_with_slash() {
+        // http://localhost/x is valid (slash marks path boundary)
+        let s = Settings {
+            groq_url: "http://localhost/proxy".into(),
+            ..Settings::default()
+        };
+        assert_eq!(s.sanitized().groq_url, "http://localhost/proxy");
+    }
+
+    #[test]
+    fn meridian_host_boundary_bypass_127_resets() {
+        // http://127.0.0.1.evil.com should NOT pass
+        let s = Settings {
+            meridian_url: "http://127.0.0.1.evil.com".into(),
+            ..Settings::default()
+        };
+        assert_eq!(s.sanitized().meridian_url, Settings::default().meridian_url);
+    }
+
+    #[test]
+    fn meridian_host_boundary_ok_with_port() {
+        // http://127.0.0.1:3456 is still valid
+        let s = Settings {
+            meridian_url: "http://127.0.0.1:3456".into(),
+            ..Settings::default()
+        };
+        assert_eq!(s.sanitized().meridian_url, "http://127.0.0.1:3456");
     }
 }
