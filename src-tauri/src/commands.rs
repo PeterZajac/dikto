@@ -44,16 +44,23 @@ pub fn get_settings(ctx: State<'_, Arc<AppCtx>>) -> Settings {
 /// position-save task so all paths stay in sync (hotkey listener, on-disk
 /// file, in-memory settings, event, tray checkmarks).
 pub(crate) fn apply_settings(ctx: &AppCtx, new: Settings) -> Result<(), String> {
-    *ctx.hotkey_name.write().unwrap() = new.hotkey.clone();
+    let new = new.sanitized();
+    // Save first: a failed write must leave the live hotkey/settings/tray
+    // state untouched instead of drifting ahead of what's on disk.
     settings::save(&ctx.settings_path, &new).map_err(|e| e.to_string())?;
+    *ctx.hotkey_name.write().unwrap() = new.hotkey.clone();
     *ctx.settings.write().unwrap() = new.clone();
     let _ = ctx.app.emit("settings:changed", &new);
     // Keep the tray's language checkmarks in sync regardless of which path
     // changed the language (Settings page, tray itself). No-op until the
-    // tray has finished building.
-    if let Some(items) = ctx.tray_lang_items.lock().unwrap().as_ref() {
+    // tray has finished building. Clone the handles out and drop the lock
+    // before calling set_checked: it blocks on the main-thread event loop,
+    // and the tray's own menu handler re-enters apply_settings while running
+    // on that same thread — holding the mutex across the call deadlocks.
+    let items = ctx.tray_lang_items.lock().unwrap().clone();
+    if let Some(items) = items {
         for (mode, item) in items {
-            let _ = item.set_checked(*mode == new.language);
+            let _ = item.set_checked(mode == new.language);
         }
     }
     Ok(())
@@ -108,9 +115,9 @@ pub async fn meridian_status(ctx: State<'_, Arc<AppCtx>>) -> Result<bool, ()> {
 
 #[tauri::command]
 pub fn finish_wizard(ctx: State<'_, Arc<AppCtx>>) -> Result<(), String> {
-    let mut s = ctx.settings.write().unwrap();
-    s.wizard_done = true;
-    settings::save(&ctx.settings_path, &s).map_err(|e| e.to_string())
+    let mut new = ctx.settings.read().unwrap().clone();
+    new.wizard_done = true;
+    apply_settings(ctx.inner(), new)
 }
 
 #[tauri::command]
