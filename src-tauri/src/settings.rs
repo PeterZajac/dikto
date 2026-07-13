@@ -56,7 +56,9 @@ impl Default for Settings {
         Self {
             hotkey: "AltGr".into(),
             language: LanguageMode::Auto,
-            cleanup_enabled: true,
+            // Off by default: dictation must reproduce the user's words
+            // verbatim; LLM cleanup is strictly opt-in.
+            cleanup_enabled: false,
             cleanup_model: "claude-sonnet-5".into(),
             meridian_url: "http://127.0.0.1:3456".into(),
             groq_url: "https://api.groq.com".into(),

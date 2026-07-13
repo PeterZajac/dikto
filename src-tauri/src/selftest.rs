@@ -47,6 +47,10 @@ pub fn run(wav_path: &str) -> i32 {
     println!("Dikto self-test");
     let mut mandatory_ok = true;
 
+    // Informational: reflects the *responsible process*'s grant — accurate
+    // when launched via `open -a Dikto`, misleading from a plain shell.
+    report("accessibility", &stage_accessibility());
+
     let (settings_outcome, settings_data) = stage_settings();
     report("settings", &settings_outcome);
     mandatory_ok &= !settings_outcome.is_fail();
@@ -238,4 +242,21 @@ fn stage_paste_event() -> Outcome {
 #[cfg(not(target_os = "macos"))]
 fn stage_paste_event() -> Outcome {
     Outcome::skip("unsupported on this OS")
+}
+
+#[cfg(target_os = "macos")]
+fn stage_accessibility() -> Outcome {
+    if macos_accessibility_client::accessibility::application_is_trusted() {
+        Outcome::pass("Accessibility granted for this process")
+    } else {
+        Outcome::skip(
+            "NOT granted for this process — hotkey capture and paste will not work; \
+             grant Accessibility to Dikto in System Settings",
+        )
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+fn stage_accessibility() -> Outcome {
+    Outcome::skip("not applicable on this OS")
 }
