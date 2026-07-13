@@ -25,6 +25,14 @@ pub fn run() {
     // (dotenv walks up from CWD; silently a no-op in bundled builds).
     let _ = dotenvy::dotenv();
     let builder = tauri::Builder::default();
+    // Must be registered first (per tauri-plugin-single-instance's docs) so
+    // it can intercept a second launch before any other plugin's setup runs.
+    let builder = builder.plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
+        if let Some(win) = app.get_webview_window("main") {
+            let _ = win.show();
+            let _ = win.set_focus();
+        }
+    }));
     #[cfg(target_os = "macos")]
     let builder = builder.plugin(tauri_nspanel::init());
     let builder = builder.plugin(tauri_plugin_autostart::init(
