@@ -7,6 +7,7 @@ mod inject;
 #[cfg(target_os = "macos")]
 mod macos_tap;
 mod pipeline;
+mod selftest;
 mod settings;
 mod state;
 mod stt;
@@ -18,6 +19,17 @@ use std::sync::{mpsc, Arc, Mutex, RwLock};
 use tauri::menu::{CheckMenuItem, CheckMenuItemBuilder, MenuBuilder, MenuItemBuilder, SubmenuBuilder};
 use tauri::tray::TrayIconBuilder;
 use tauri::{Emitter, Manager, WindowEvent};
+
+/// Must match `identifier` in tauri.conf.json — `--selftest` resolves the
+/// real app config dir itself (headless, no `AppHandle`) and needs to agree
+/// with what `app.path().app_config_dir()` resolves to at runtime.
+pub(crate) const APP_IDENTIFIER: &str = "com.peterzajac.dikto";
+
+/// Runs the headless `--selftest <wav-path>` pipeline check (see
+/// `selftest.rs`) and returns the process exit code.
+pub fn run_selftest(wav_path: &str) -> i32 {
+    selftest::run(wav_path)
+}
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {

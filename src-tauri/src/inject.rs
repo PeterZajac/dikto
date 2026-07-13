@@ -42,11 +42,12 @@ pub fn inject_text(text: &str) -> Result<(), InjectError> {
 // on every dictation. Post the Cmd+V keystroke directly via CGEvent instead
 // — CGEventPost is thread-safe and never touches HIToolbox/TSM.
 #[cfg(target_os = "macos")]
-fn paste_keystroke() -> Result<(), InjectError> {
+const KEY_V: core_graphics::event::CGKeyCode = 9;
+
+#[cfg(target_os = "macos")]
+pub(crate) fn paste_keystroke() -> Result<(), InjectError> {
     use core_graphics::event::{CGEvent, CGEventFlags, CGEventTapLocation};
     use core_graphics::event_source::{CGEventSource, CGEventSourceStateID};
-
-    const KEY_V: core_graphics::event::CGKeyCode = 9;
 
     let source = CGEventSource::new(CGEventSourceStateID::HIDSystemState)
         .map_err(|_| InjectError::Keystroke("CGEventSourceCreate failed".to_string()))?;
@@ -62,6 +63,28 @@ fn paste_keystroke() -> Result<(), InjectError> {
         .map_err(|_| InjectError::Keystroke("CGEventCreateKeyboardEvent (up) failed".to_string()))?;
     key_up.set_flags(CGEventFlags::CGEventFlagCommand);
     key_up.post(CGEventTapLocation::HID);
+
+    Ok(())
+}
+
+/// Builds the same Cmd+V keydown/keyup events as `paste_keystroke` but never
+/// posts them — used by `--selftest` to verify CGEvent construction works
+/// without actually injecting a keystroke into the frontmost app.
+#[cfg(target_os = "macos")]
+pub(crate) fn probe_construct_paste_event() -> Result<(), InjectError> {
+    use core_graphics::event::{CGEvent, CGEventFlags};
+    use core_graphics::event_source::{CGEventSource, CGEventSourceStateID};
+
+    let source = CGEventSource::new(CGEventSourceStateID::HIDSystemState)
+        .map_err(|_| InjectError::Keystroke("CGEventSourceCreate failed".to_string()))?;
+
+    let key_down = CGEvent::new_keyboard_event(source.clone(), KEY_V, true)
+        .map_err(|_| InjectError::Keystroke("CGEventCreateKeyboardEvent (down) failed".to_string()))?;
+    key_down.set_flags(CGEventFlags::CGEventFlagCommand);
+
+    let key_up = CGEvent::new_keyboard_event(source, KEY_V, false)
+        .map_err(|_| InjectError::Keystroke("CGEventCreateKeyboardEvent (up) failed".to_string()))?;
+    key_up.set_flags(CGEventFlags::CGEventFlagCommand);
 
     Ok(())
 }
