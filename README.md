@@ -101,6 +101,54 @@ pnpm tauri dev
 `pnpm build` builds the frontend only; `pnpm tauri build` produces a full
 platform bundle. Backend tests: `cd src-tauri && cargo test`.
 
+### Development install (macOS)
+
+Dev builds are ad-hoc signed by default, and ad-hoc signatures embed a hash
+of the binary itself — so the signing identity changes on *every* rebuild.
+macOS ties TCC grants (Accessibility, Microphone) to that identity, so each
+reinstall silently revokes them: System Settings still shows the toggle as
+ON, but the permission is dead, and dictation/paste stop working until you
+manually re-grant it. Signing dev builds with a fixed local identity instead
+keeps the identity stable across rebuilds, so grants survive.
+
+One-time setup:
+
+```sh
+scripts/make-signing-cert.sh
+```
+
+Creates and trusts a self-signed "Dikto Dev" code-signing certificate. Idempotent — safe to re-run.
+
+For every iteration after that:
+
+```sh
+scripts/dev-install.sh
+```
+
+Builds, signs the app with "Dikto Dev", and installs it to `/Applications`,
+clearing the quarantine flag. If the certificate isn't installed, it falls
+back to an unsigned install with a warning instead of failing.
+
+After switching from an unsigned/ad-hoc build to the signed one, reset the
+stale TCC grants once and re-grant them:
+
+```sh
+tccutil reset All com.peterzajac.dikto
+```
+
+Then open Dikto and grant Accessibility/Microphone one final time — from
+then on, rebuilds via `dev-install.sh` won't invalidate them again.
+
+### Self-test
+
+`Dikto --selftest <path-to-wav>` runs a headless pipeline check (settings +
+Groq key, WAV decoding, Groq transcription, Meridian cleanup, clipboard
+round-trip, and paste-event construction) without launching the GUI, printing
+one `[PASS]`/`[FAIL]`/`[SKIP]` line per stage. Useful for verifying a signed
+build end-to-end, especially the Groq API key and TCC-gated bits, without
+having to dictate through the UI. Exits non-zero if any mandatory stage
+fails.
+
 ## Architecture
 
 The Tauri backend (`src-tauri/`) owns a hotkey listener (a raw CGEventTap on
