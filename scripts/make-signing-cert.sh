@@ -39,7 +39,14 @@ openssl req -x509 -newkey rsa:2048 -sha256 -days 3650 -nodes \
     -addext "basicConstraints=critical,CA:false" \
     -addext "keyUsage=critical,digitalSignature"
 
-openssl pkcs12 -export \
+# OpenSSL 3.x defaults to PBKDF2/AES for PKCS12, which macOS `security
+# import` cannot parse ("MAC verification failed"). Use -legacy when the
+# installed openssl supports it; LibreSSL (system openssl) needs no flag.
+P12_LEGACY=()
+if openssl pkcs12 -help 2>&1 | grep -q -- "-legacy"; then
+    P12_LEGACY=(-legacy)
+fi
+openssl pkcs12 -export "${P12_LEGACY[@]}" \
     -inkey "$KEY_PEM" -in "$CERT_PEM" \
     -out "$P12_PATH" \
     -passout "pass:$P12_PASSWORD" \
