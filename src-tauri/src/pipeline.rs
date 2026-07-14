@@ -295,7 +295,7 @@ pub async fn transcribe_and_deliver(ctx: Arc<AppCtx>, wav: Vec<u8>, gen: u64, du
                 transcript.language.as_deref(),
                 duration_ms,
             );
-            if advance(&ctx, gen, Event::Injected, Some(note.unwrap_or("✓ vložené"))) {
+            if advance(&ctx, gen, Event::Injected, Some(note.unwrap_or("✓ vložené — text je aj v schránke"))) {
                 hide_bubble_after(&ctx, gen, 1200);
             }
         }

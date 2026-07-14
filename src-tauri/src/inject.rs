@@ -14,24 +14,23 @@ pub fn copy_only(text: &str) -> Result<(), InjectError> {
         .map_err(|e| InjectError::Clipboard(e.to_string()))
 }
 
-/// Saves the clipboard, puts `text` in it, simulates Cmd/Ctrl+V into the
-/// frontmost app, then restores the original clipboard.
+/// Puts `text` in the clipboard and simulates Cmd/Ctrl+V into the frontmost
+/// app. The dictated text stays in the clipboard afterwards — deliberately:
+/// a synthetic paste can silently miss (no text field focused, app ignoring
+/// synthetic events), and restoring the previous clipboard would destroy the
+/// only copy. A manual Cmd+V must always be able to recover the dictation.
 pub fn inject_text(text: &str) -> Result<(), InjectError> {
     let mut cb = arboard::Clipboard::new().map_err(|e| InjectError::Clipboard(e.to_string()))?;
-    let previous = cb.get_text().ok();
     cb.set_text(text.to_string())
         .map_err(|e| InjectError::Clipboard(e.to_string()))?;
 
     // Give the OS clipboard a beat before pasting.
-    std::thread::sleep(Duration::from_millis(80));
+    std::thread::sleep(Duration::from_millis(120));
 
     let result = paste_keystroke();
 
-    // Let the paste land before restoring the old clipboard.
+    // Let the paste land before returning (phase flips to Idle after this).
     std::thread::sleep(Duration::from_millis(150));
-    if let Some(prev) = previous {
-        let _ = cb.set_text(prev);
-    }
     result
 }
 
