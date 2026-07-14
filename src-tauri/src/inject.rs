@@ -55,20 +55,21 @@ fn type_text(text: &str) -> Result<(), InjectError> {
         ));
     }
 
-    let source = CGEventSource::new(CGEventSourceStateID::HIDSystemState)
+    // CombinedSessionState, keydown-only events, 20-char chunks: this mirrors
+    // enigo's battle-tested fast_text — HIDSystemState-sourced unicode events
+    // get ignored by many apps, and CGEventKeyboardSetUnicodeString truncates
+    // payloads beyond 20 characters.
+    let source = CGEventSource::new(CGEventSourceStateID::CombinedSessionState)
         .map_err(|_| InjectError::Keystroke("CGEventSourceCreate failed".to_string()))?;
 
     let chars: Vec<char> = text.chars().collect();
-    for chunk in chars.chunks(10) {
-        let payload: Vec<u16> = chunk.iter().collect::<String>().encode_utf16().collect();
+    for chunk in chars.chunks(20) {
+        let payload: String = chunk.iter().collect();
         let down = CGEvent::new_keyboard_event(source.clone(), 0, true)
             .map_err(|_| InjectError::Keystroke("CGEventCreateKeyboardEvent failed".to_string()))?;
-        down.set_string_from_utf16_unchecked(&payload);
+        down.set_string(&payload);
         down.post(CGEventTapLocation::HID);
-        let up = CGEvent::new_keyboard_event(source.clone(), 0, false)
-            .map_err(|_| InjectError::Keystroke("CGEventCreateKeyboardEvent failed".to_string()))?;
-        up.post(CGEventTapLocation::HID);
-        std::thread::sleep(Duration::from_millis(3));
+        std::thread::sleep(Duration::from_millis(2));
     }
     Ok(())
 }
