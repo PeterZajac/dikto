@@ -49,6 +49,15 @@ pub(crate) fn paste_keystroke() -> Result<(), InjectError> {
     use core_graphics::event::{CGEvent, CGEventFlags, CGEventTapLocation};
     use core_graphics::event_source::{CGEventSource, CGEventSourceStateID};
 
+    // Without the Accessibility grant CGEventPost is silently dropped —
+    // the paste would "succeed" while nothing lands. Fail honestly so the
+    // pipeline's clipboard fallback + error message kick in.
+    if !macos_accessibility_client::accessibility::application_is_trusted() {
+        return Err(InjectError::Keystroke(
+            "chýba povolenie Prístupnosť — vkladanie nie je možné".to_string(),
+        ));
+    }
+
     let source = CGEventSource::new(CGEventSourceStateID::HIDSystemState)
         .map_err(|_| InjectError::Keystroke("CGEventSourceCreate failed".to_string()))?;
 

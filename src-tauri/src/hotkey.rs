@@ -170,14 +170,33 @@ pub fn spawn(
             // time this thread sees a key. macos_tap.rs never touches
             // HIToolbox, so macOS gets its own event source; every other
             // platform keeps using rdev as before.
+            // A session tap created WITHOUT the Accessibility grant does not
+            // fail — it silently degrades to delivering only our own app's
+            // events (hotkey "works" only while Dikto is focused). Never
+            // create the tap in that state: warn, then wait for the grant —
+            // TCC applies it live, so no app restart is needed.
             #[cfg(target_os = "macos")]
-            let result = crate::macos_tap::listen(move |ev| {
-                let (name, is_down) = match ev {
-                    crate::macos_tap::TapEvent::Down(n) => (n, true),
-                    crate::macos_tap::TapEvent::Up(n) => (n, false),
-                };
-                handle_event(name, is_down);
-            });
+            let result = {
+                use macos_accessibility_client::accessibility::application_is_trusted;
+                if !application_is_trusted() {
+                    on_dead(
+                        "Globálna klávesa nefunguje — chýba povolenie Prístupnosť. \
+                         Otvor Nastavenia → Súkromie a bezpečnosť → Prístupnosť a povoľ Dikto; \
+                         appka to zachytí sama, netreba ju reštartovať."
+                            .to_string(),
+                    );
+                    while !application_is_trusted() {
+                        std::thread::sleep(std::time::Duration::from_secs(3));
+                    }
+                }
+                crate::macos_tap::listen(move |ev| {
+                    let (name, is_down) = match ev {
+                        crate::macos_tap::TapEvent::Down(n) => (n, true),
+                        crate::macos_tap::TapEvent::Up(n) => (n, false),
+                    };
+                    handle_event(name, is_down);
+                })
+            };
 
             #[cfg(not(target_os = "macos"))]
             let result = rdev::listen(move |ev| {
