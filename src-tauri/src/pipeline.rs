@@ -125,25 +125,6 @@ fn show_bubble(ctx: &AppCtx) {
     }
 }
 
-/// `gen` is the take that scheduled this hide. A newer take starting (and
-/// possibly finishing) during `ms` would flip the phase back to Idle for a
-/// different take — checking phase alone isn't enough, so take_gen must also
-/// still match under the same phase-lock hold before we hide the bubble.
-fn hide_bubble_after(ctx: &Arc<AppCtx>, gen: u64, ms: u64) {
-    let ctx = ctx.clone();
-    tauri::async_runtime::spawn(async move {
-        tokio::time::sleep(std::time::Duration::from_millis(ms)).await;
-        let should_hide = {
-            let guard = ctx.phase.lock().unwrap();
-            *guard == Phase::Idle && ctx.take_gen.load(Ordering::SeqCst) == gen
-        };
-        if should_hide {
-            if let Some(w) = ctx.app.get_webview_window("bubble") {
-                let _ = w.hide();
-            }
-        }
-    });
-}
 
 pub fn handle_signal(ctx: Arc<AppCtx>, sig: HotkeySignal) {
     match sig {
@@ -191,7 +172,6 @@ pub fn cancel(ctx: &Arc<AppCtx>) {
     // invalidate the in-flight take's gen while its phase stays put, wedging it.
     if let Some(gen) = begin(ctx, Event::Cancel, true, None) {
         let _ = ctx.recorder.stop();
-        hide_bubble_after(ctx, gen, 0);
         // This Cancel didn't come from the hotkey interpreter (Esc, or a
         // command-driven cancel) — resync it to Idle so a stale Locked/
         // TapArmed mode doesn't eat the next real key press.
@@ -209,7 +189,6 @@ async fn finish(ctx: Arc<AppCtx>, gen: u64) {
     // < 0.4 s of audio → treat as silence.
     if samples.len() < (rate as usize * ch as usize) * 2 / 5 {
         if advance(&ctx, gen, Event::Cancel, Some("nič som nepočul")) {
-            hide_bubble_after(&ctx, gen, 1200);
         }
         return;
     }
@@ -250,7 +229,6 @@ pub async fn transcribe_and_deliver(ctx: Arc<AppCtx>, wav: Vec<u8>, gen: u64, du
     };
     if transcript.text.is_empty() {
         if advance(&ctx, gen, Event::Cancel, Some("nič som nepočul")) {
-            hide_bubble_after(&ctx, gen, 1200);
         }
         return;
     }
@@ -296,7 +274,6 @@ pub async fn transcribe_and_deliver(ctx: Arc<AppCtx>, wav: Vec<u8>, gen: u64, du
                 duration_ms,
             );
             if advance(&ctx, gen, Event::Injected, Some(note.unwrap_or("✓ vložené — text je aj v schránke"))) {
-                hide_bubble_after(&ctx, gen, 1200);
             }
         }
         Err(e) => {

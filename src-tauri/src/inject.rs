@@ -14,24 +14,63 @@ pub fn copy_only(text: &str) -> Result<(), InjectError> {
         .map_err(|e| InjectError::Clipboard(e.to_string()))
 }
 
-/// Puts `text` in the clipboard and simulates Cmd/Ctrl+V into the frontmost
-/// app. The dictated text stays in the clipboard afterwards — deliberately:
-/// a synthetic paste can silently miss (no text field focused, app ignoring
-/// synthetic events), and restoring the previous clipboard would destroy the
-/// only copy. A manual Cmd+V must always be able to recover the dictation.
+/// Delivers `text` to the frontmost app. The text is FIRST copied to the
+/// clipboard (kept there as the always-available backup), then inserted at
+/// the cursor: on macOS by typing it directly as CGEvent unicode keystrokes
+/// (lands anywhere a caret blinks — synthetic Cmd+V is ignored by some
+/// apps), elsewhere by simulating the paste shortcut.
 pub fn inject_text(text: &str) -> Result<(), InjectError> {
     let mut cb = arboard::Clipboard::new().map_err(|e| InjectError::Clipboard(e.to_string()))?;
     cb.set_text(text.to_string())
         .map_err(|e| InjectError::Clipboard(e.to_string()))?;
 
-    // Give the OS clipboard a beat before pasting.
-    std::thread::sleep(Duration::from_millis(120));
+    #[cfg(target_os = "macos")]
+    let result = type_text(text);
 
-    let result = paste_keystroke();
+    #[cfg(not(target_os = "macos"))]
+    let result = {
+        // Give the OS clipboard a beat before pasting.
+        std::thread::sleep(Duration::from_millis(120));
+        let r = paste_keystroke();
+        // Let the paste land before returning (phase flips to Idle after).
+        std::thread::sleep(Duration::from_millis(150));
+        r
+    };
 
-    // Let the paste land before returning (phase flips to Idle after this).
-    std::thread::sleep(Duration::from_millis(150));
     result
+}
+
+/// Types `text` into the focused control as synthetic keyboard events with a
+/// UTF-16 payload (`CGEventKeyboardSetUnicodeString`) — no clipboard, no
+/// keyboard-layout translation, no HIToolbox. Chunked by whole characters so
+/// surrogate pairs never split across events.
+#[cfg(target_os = "macos")]
+fn type_text(text: &str) -> Result<(), InjectError> {
+    use core_graphics::event::{CGEvent, CGEventTapLocation};
+    use core_graphics::event_source::{CGEventSource, CGEventSourceStateID};
+
+    if !macos_accessibility_client::accessibility::application_is_trusted() {
+        return Err(InjectError::Keystroke(
+            "chýba povolenie Prístupnosť — vkladanie nie je možné".to_string(),
+        ));
+    }
+
+    let source = CGEventSource::new(CGEventSourceStateID::HIDSystemState)
+        .map_err(|_| InjectError::Keystroke("CGEventSourceCreate failed".to_string()))?;
+
+    let chars: Vec<char> = text.chars().collect();
+    for chunk in chars.chunks(10) {
+        let payload: Vec<u16> = chunk.iter().collect::<String>().encode_utf16().collect();
+        let down = CGEvent::new_keyboard_event(source.clone(), 0, true)
+            .map_err(|_| InjectError::Keystroke("CGEventCreateKeyboardEvent failed".to_string()))?;
+        down.set_string_from_utf16_unchecked(&payload);
+        down.post(CGEventTapLocation::HID);
+        let up = CGEvent::new_keyboard_event(source.clone(), 0, false)
+            .map_err(|_| InjectError::Keystroke("CGEventCreateKeyboardEvent failed".to_string()))?;
+        up.post(CGEventTapLocation::HID);
+        std::thread::sleep(Duration::from_millis(3));
+    }
+    Ok(())
 }
 
 // enigo's macOS backend calls TISCopyCurrentKeyboardInputSource /

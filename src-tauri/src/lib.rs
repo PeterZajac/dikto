@@ -144,6 +144,9 @@ pub fn run() {
 
             if let Some(bubble) = app.get_webview_window("bubble") {
                 position_bubble(&bubble, bubble_pos);
+                // Always visible: idle renders as a mini-dot (click-through),
+                // so the user sees at a glance that Dikto is alive.
+                let _ = bubble.show();
                 #[cfg(target_os = "macos")]
                 {
                     use tauri_nspanel::WebviewWindowExt;

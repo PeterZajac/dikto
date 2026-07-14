@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type CSSProperties } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import {
   AmplitudePayload,
   EVENT_AMPLITUDE,
@@ -83,7 +84,30 @@ export default function Bubble() {
     };
   }, [phase]);
 
+  // Result/error messages shown in the idle pill fade back to the mini-dot
+  // on their own — nothing else clears them once the pipeline is idle.
+  useEffect(() => {
+    if (phase !== "idle" || !message) return;
+    const t = window.setTimeout(() => setMessage(null), 2200);
+    return () => window.clearTimeout(t);
+  }, [phase, message]);
+
+  // Idle mini-dot must not swallow clicks meant for whatever is behind the
+  // bubble window; any active state needs clicks again (cancel/retry).
+  const isIdleDot = phase === "idle" && !message;
+  useEffect(() => {
+    void getCurrentWindow().setIgnoreCursorEvents(isIdleDot);
+  }, [isIdleDot]);
+
   const mmss = `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`;
+
+  if (isIdleDot) {
+    return (
+      <div className="bubble-idle" aria-label="Dikto je aktívne">
+        <span className="bubble-idle__dot" />
+      </div>
+    );
+  }
 
   return (
     <div
