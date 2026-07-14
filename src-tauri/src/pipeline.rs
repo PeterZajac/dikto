@@ -170,7 +170,7 @@ pub fn cancel(ctx: &Arc<AppCtx>) {
     // Gen only bumps (and recorder only stops) on a legal transition —
     // otherwise (e.g. Esc during Injecting, where Cancel is illegal) we'd
     // invalidate the in-flight take's gen while its phase stays put, wedging it.
-    if let Some(gen) = begin(ctx, Event::Cancel, true, None) {
+    if begin(ctx, Event::Cancel, true, None).is_some() {
         let _ = ctx.recorder.stop();
         // This Cancel didn't come from the hotkey interpreter (Esc, or a
         // command-driven cancel) — resync it to Idle so a stale Locked/
@@ -188,8 +188,7 @@ async fn finish(ctx: Arc<AppCtx>, gen: u64) {
     };
     // < 0.4 s of audio → treat as silence.
     if samples.len() < (rate as usize * ch as usize) * 2 / 5 {
-        if advance(&ctx, gen, Event::Cancel, Some("nič som nepočul")) {
-        }
+        advance(&ctx, gen, Event::Cancel, Some("nič som nepočul"));
         return;
     }
     let duration_ms = (samples.len() as i64 * 1000) / (rate as i64 * ch.max(1) as i64);
@@ -228,8 +227,7 @@ pub async fn transcribe_and_deliver(ctx: Arc<AppCtx>, wav: Vec<u8>, gen: u64, du
         }
     };
     if transcript.text.is_empty() {
-        if advance(&ctx, gen, Event::Cancel, Some("nič som nepočul")) {
-        }
+        advance(&ctx, gen, Event::Cancel, Some("nič som nepočul"));
         return;
     }
 
