@@ -7,6 +7,8 @@ mod inject;
 #[cfg(target_os = "macos")]
 mod macos_tap;
 mod pipeline;
+mod ratelimit;
+mod recordings;
 mod selftest;
 mod settings;
 mod state;
@@ -65,6 +67,10 @@ pub fn run() {
             commands::history_list,
             commands::history_delete,
             commands::history_clear,
+            commands::history_retry,
+            commands::history_audio_path,
+            commands::history_export_audio,
+            commands::test_cleanup,
             commands::permissions_status,
             commands::open_privacy_settings,
             commands::open_url,
@@ -89,6 +95,8 @@ pub fn run() {
             migrate_from_old_identifier(&data_dir, "history.sqlite");
             std::fs::create_dir_all(&data_dir).expect("create app data dir");
             let history = history::HistoryStore::open_or_recover(&data_dir.join("history.sqlite"));
+            let recordings = recordings::RecordingStore::new(data_dir.join("audio"));
+            startup_maintenance(&history, &recordings, s.audio_retention_days);
 
             let capture_next = Arc::new(AtomicBool::new(false));
 
@@ -115,13 +123,15 @@ pub fn run() {
                 phase: Mutex::new(state::Phase::Idle),
                 recorder: audio::Recorder::new(),
                 settings: RwLock::new(s),
-                pending_wav: Mutex::new(None),
+                pending_take: Mutex::new(None),
                 partial_inflight: AtomicBool::new(false),
                 take_gen: AtomicU64::new(0),
                 app: app.handle().clone(),
                 hotkey_name: hotkey_name.clone(),
                 settings_path,
                 history,
+                recordings,
+                limiter: ratelimit::Limiter::default(),
                 capture_next: capture_next.clone(),
                 tray_lang_items: Mutex::new(None),
                 hotkey_interp,
@@ -205,6 +215,37 @@ pub fn run() {
         })
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+/// Startup housekeeping for the recordings store, in the order that keeps the
+/// DB and the disk agreeing: rescue takes the last run died on, drop audio
+/// past its retention, then delete WAVs nothing points at any more.
+fn startup_maintenance(
+    history: &history::HistoryStore,
+    recordings: &recordings::RecordingStore,
+    retention_days: u32,
+) {
+    match history.fail_stale_pending("prepis neprebehol — aplikácia sa ukončila") {
+        Ok(n) if n > 0 => eprintln!("recovered {n} unfinished dictation(s) from the last run"),
+        Ok(_) => {}
+        Err(e) => eprintln!("could not recover unfinished dictations: {e}"),
+    }
+    if retention_days > 0 {
+        let cutoff = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis() as i64
+            - (retention_days as i64 * 24 * 60 * 60 * 1000);
+        match history.drop_audio_done_before(cutoff) {
+            Ok(freed) => recordings.remove_all(freed),
+            Err(e) => eprintln!("could not apply audio retention: {e}"),
+        }
+    }
+    match history.all_audio_paths() {
+        Ok(keep) => recordings.sweep_orphans(&keep.into_iter().collect()),
+        // Without a reliable keep-set a sweep would delete real recordings.
+        Err(e) => eprintln!("skipping orphan sweep, could not read history: {e}"),
+    }
 }
 
 /// Copies `filename` from the pre-rename app dir (identifier
@@ -343,4 +384,118 @@ fn build_tray(app: &tauri::AppHandle, ctx: &Arc<AppCtx>) -> tauri::Result<()> {
     }
     builder.build(app)?;
     Ok(())
+}
+
+#[cfg(test)]
+mod maintenance_tests {
+    use super::*;
+    use crate::history::{HistoryStore, STATUS_DONE, STATUS_FAILED};
+    use crate::recordings::RecordingStore;
+
+    struct Fixture {
+        _dir: tempfile::TempDir,
+        history: HistoryStore,
+        recordings: RecordingStore,
+    }
+
+    fn fixture() -> Fixture {
+        let dir = tempfile::tempdir().unwrap();
+        let history = HistoryStore::open(&dir.path().join("history.sqlite")).unwrap();
+        let recordings = RecordingStore::new(dir.path().join("audio"));
+        Fixture { _dir: dir, history, recordings }
+    }
+
+    fn now_ms() -> i64 {
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as i64
+    }
+
+    fn backdate(history: &HistoryStore, id: i64, days: i64) {
+        history
+            .set_ts_for_test(id, now_ms() - days * 24 * 60 * 60 * 1000)
+            .unwrap();
+    }
+
+    #[test]
+    fn a_take_interrupted_by_a_crash_becomes_retryable_and_keeps_its_audio() {
+        let f = fixture();
+        let name = f.recordings.save(b"RIFF-interrupted", 1).unwrap();
+        let id = f.history.insert_pending(Some(&name), 5000).unwrap();
+
+        startup_maintenance(&f.history, &f.recordings, 7);
+
+        let row = f.history.get(id).unwrap().unwrap();
+        assert_eq!(row.status, STATUS_FAILED);
+        assert!(row.error.is_some());
+        assert_eq!(row.audio_path.as_deref(), Some(name.as_str()));
+        assert_eq!(f.recordings.read(&name).unwrap(), b"RIFF-interrupted");
+    }
+
+    #[test]
+    fn retention_frees_old_audio_but_never_the_text() {
+        let f = fixture();
+        let name = f.recordings.save(b"old", 1).unwrap();
+        let id = f.history.insert_pending(Some(&name), 5000).unwrap();
+        f.history.mark_done(id, "surovy", "Cisty.", Some("sk")).unwrap();
+        backdate(&f.history, id, 30);
+
+        startup_maintenance(&f.history, &f.recordings, 7);
+
+        let row = f.history.get(id).unwrap().unwrap();
+        assert_eq!(row.status, STATUS_DONE);
+        assert_eq!(row.clean, "Cisty.", "text must outlive the audio");
+        assert_eq!(row.audio_path, None);
+        assert!(f.recordings.read(&name).is_err(), "the WAV should be gone");
+    }
+
+    #[test]
+    fn retention_zero_keeps_audio_forever() {
+        let f = fixture();
+        let name = f.recordings.save(b"ancient", 1).unwrap();
+        let id = f.history.insert_pending(Some(&name), 5000).unwrap();
+        f.history.mark_done(id, "a", "A.", None).unwrap();
+        backdate(&f.history, id, 3650);
+
+        startup_maintenance(&f.history, &f.recordings, 0);
+
+        assert_eq!(f.history.get(id).unwrap().unwrap().audio_path.as_deref(), Some(name.as_str()));
+        assert_eq!(f.recordings.read(&name).unwrap(), b"ancient");
+    }
+
+    #[test]
+    fn a_failed_take_keeps_its_audio_no_matter_how_old() {
+        let f = fixture();
+        let name = f.recordings.save(b"rate-limited", 1).unwrap();
+        let id = f.history.insert_pending(Some(&name), 5000).unwrap();
+        f.history.mark_failed(id, "groq api 429").unwrap();
+        backdate(&f.history, id, 3650);
+
+        startup_maintenance(&f.history, &f.recordings, 7);
+
+        assert_eq!(f.history.get(id).unwrap().unwrap().audio_path.as_deref(), Some(name.as_str()));
+        assert_eq!(f.recordings.read(&name).unwrap(), b"rate-limited");
+    }
+
+    #[test]
+    fn a_wav_no_row_points_at_is_swept_while_referenced_ones_survive() {
+        let f = fixture();
+        let orphan = f.recordings.save(b"orphan", 1).unwrap();
+        let kept = f.recordings.save(b"kept", 2).unwrap();
+        let id = f.history.insert_pending(Some(&kept), 5000).unwrap();
+        f.history.mark_done(id, "a", "A.", None).unwrap();
+
+        startup_maintenance(&f.history, &f.recordings, 7);
+
+        assert!(f.recordings.read(&orphan).is_err());
+        assert_eq!(f.recordings.read(&kept).unwrap(), b"kept");
+    }
+
+    #[test]
+    fn maintenance_on_an_empty_store_is_a_no_op() {
+        let f = fixture();
+        startup_maintenance(&f.history, &f.recordings, 7);
+        assert!(f.history.list(None, 10).unwrap().is_empty());
+    }
 }

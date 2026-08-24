@@ -1,4 +1,4 @@
-use crate::settings::CleanupStyle;
+use crate::settings::{CleanupStyle, Settings};
 use serde::Deserialize;
 use std::time::Duration;
 
@@ -43,6 +43,8 @@ pub struct CleanupClient {
     http: reqwest::Client,
 }
 
+/// Meridian runs on loopback, so a short leash keeps a wedged proxy from
+/// holding up the paste.
 pub const CLEANUP_TIMEOUT: Duration = Duration::from_secs(5);
 
 impl CleanupClient {
@@ -66,6 +68,18 @@ impl CleanupClient {
         }
     }
 
+    /// The client the pipeline uses — endpoint, model and style all follow
+    /// from settings so no caller has to pair them up.
+    pub fn for_settings(s: &Settings) -> Self {
+        Self::with_style(s.meridian_url.clone(), s.cleanup_model.clone(), s.cleanup_style)
+    }
+
+    /// Meridian holds the Claude subscription itself; the header is a
+    /// placeholder it ignores.
+    fn authorize(&self, req: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
+        req.header("x-api-key", "local")
+    }
+
     fn system_prompt(&self) -> String {
         match self.style {
             CleanupStyle::Light => SYSTEM_PROMPT.to_string(),
@@ -80,12 +94,13 @@ impl CleanupClient {
             "system": self.system_prompt(),
             "messages": [{ "role": "user", "content": raw }]
         });
-        let resp = self
+        let req = self
             .http
             .post(format!("{}/v1/messages", self.base_url))
-            .header("x-api-key", "local")
             .header("anthropic-version", "2023-06-01")
-            .json(&body)
+            .json(&body);
+        let resp = self
+            .authorize(req)
             .send()
             .await
             .map_err(|e| CleanupError::Network(e.to_string()))?;
@@ -113,10 +128,38 @@ impl CleanupClient {
         Ok(text)
     }
 
-    /// Cheap reachability probe reserved for the Plan 2 settings UI;
-    /// the pipeline does not call this today.
+    /// Cheap reachability probe for Meridian's status dot — says the proxy is
+    /// listening, nothing about whether it can actually answer.
     pub async fn is_reachable(&self) -> bool {
         self.http.get(&self.base_url).send().await.is_ok()
+    }
+
+    /// Round-trips the smallest possible completion to prove the credential
+    /// and model actually work. Backs the "Otestovať" button.
+    pub async fn probe(&self) -> Result<(), CleanupError> {
+        let body = serde_json::json!({
+            "model": self.model,
+            "max_tokens": 1,
+            "messages": [{ "role": "user", "content": "hi" }]
+        });
+        let req = self
+            .http
+            .post(format!("{}/v1/messages", self.base_url))
+            .header("anthropic-version", "2023-06-01")
+            .json(&body);
+        let resp = self
+            .authorize(req)
+            .send()
+            .await
+            .map_err(|e| CleanupError::Network(e.to_string()))?;
+        let status = resp.status();
+        if status.is_success() {
+            return Ok(());
+        }
+        Err(CleanupError::Api {
+            status: status.as_u16(),
+            body: resp.text().await.unwrap_or_default(),
+        })
     }
 }
 
@@ -217,6 +260,49 @@ mod tests {
         assert!(matches!(
             c.clean("x").await,
             Err(CleanupError::Api { status: 500, .. })
+        ));
+    }
+
+    #[tokio::test]
+    async fn for_settings_targets_the_configured_meridian_with_the_placeholder_key() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/v1/messages"))
+            .and(header("x-api-key", "local"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "content": [{ "type": "text", "text": "Ahoj." }]
+            })))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let c = CleanupClient::for_settings(&Settings {
+            meridian_url: server.uri(),
+            ..Settings::default()
+        });
+        assert_eq!(c.clean("x").await.unwrap(), "Ahoj.");
+    }
+
+    #[tokio::test]
+    async fn probe_succeeds_on_2xx_and_reports_the_status_otherwise() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/v1/messages"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "content": [{ "type": "text", "text": "ok" }]
+            })))
+            .mount(&server)
+            .await;
+        assert!(CleanupClient::new(server.uri(), "m".into()).probe().await.is_ok());
+
+        let bad = MockServer::start().await;
+        Mock::given(method("POST"))
+            .respond_with(ResponseTemplate::new(503).set_body_string("down"))
+            .mount(&bad)
+            .await;
+        assert!(matches!(
+            CleanupClient::new(bad.uri(), "m".into()).probe().await,
+            Err(CleanupError::Api { status: 503, .. })
         ));
     }
 }

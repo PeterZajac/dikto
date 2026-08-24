@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-test-cleanup"
+description = "Enables the test_cleanup command without any pre-configured scope."
+commands.allow = ["test_cleanup"]
+
+[[permission]]
+identifier = "deny-test-cleanup"
+description = "Denies the test_cleanup command without any pre-configured scope."
+commands.deny = ["test_cleanup"]

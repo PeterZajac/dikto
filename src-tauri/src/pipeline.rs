@@ -1,14 +1,31 @@
 use crate::audio::{self, Recorder};
 use crate::cleanup::CleanupClient;
 use crate::hotkey::HotkeySignal;
+use crate::ratelimit::{Limiter, Priority};
+use crate::recordings::RecordingStore;
 use crate::settings::{self, LanguageMode, Settings};
 use crate::state::{transition, Event, Phase};
-use crate::stt::SttClient;
+use crate::stt::{RetryPolicy, SttClient};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
+use std::time::{Duration, Instant};
 use tauri::menu::CheckMenuItem;
 use tauri::{AppHandle, Emitter, Manager, Wry};
+
+/// A take whose audio is already on disk and whose history row is claimed.
+/// Everything downstream only updates that row, so no failure past this point
+/// can lose the recording.
+#[derive(Debug, Clone)]
+pub struct TakeRecord {
+    pub row_id: i64,
+    pub audio_name: Option<String>,
+}
+
+/// How long after the user stops speaking an automatic retry may still paste
+/// at the cursor. Past this they've almost certainly moved on, and the text
+/// would land in the wrong window — history plus clipboard instead.
+pub const INJECT_GRACE: Duration = Duration::from_secs(15);
 
 /// The tray's four language `CheckMenuItem`s, keyed by the mode each one
 /// represents — `apply_settings` uses this to keep the tray's checkmarks in
@@ -19,7 +36,9 @@ pub struct AppCtx {
     pub phase: Mutex<Phase>,
     pub recorder: Recorder,
     pub settings: RwLock<Settings>,
-    pub pending_wav: Mutex<Option<Vec<u8>>>,
+    /// The last take that failed, kept so the bubble's "skúsiť znova" knows
+    /// which history row and which WAV on disk to re-run.
+    pub pending_take: Mutex<Option<TakeRecord>>,
     pub partial_inflight: AtomicBool,
     /// Bumped on every start_recording/cancel/retry; async tasks capture the
     /// value at spawn time and drop their FSM event if it no longer matches —
@@ -31,6 +50,11 @@ pub struct AppCtx {
     pub hotkey_name: Arc<RwLock<String>>,
     pub settings_path: PathBuf,
     pub history: crate::history::HistoryStore,
+    /// WAV files behind the history rows.
+    pub recordings: RecordingStore,
+    /// Shared throttle in front of Groq — keeps the live preview from spending
+    /// the quota the final transcription needs.
+    pub limiter: Limiter,
     /// Shared with hotkey::spawn's listener thread — set true to divert the
     /// next KeyPress into a `hotkey:captured` event instead of interpreting it.
     pub capture_next: Arc<AtomicBool>,
@@ -103,18 +127,64 @@ pub(crate) fn begin(ctx: &AppCtx, ev: Event, new_take: bool, message: Option<&st
     Some(gen)
 }
 
-/// Stashes `wav` in `ctx.pending_wav` iff `gen` is still the current take,
-/// checked and written atomically under `ctx.phase` (the gen authority) so a
-/// take that starts between a separate check-then-write can't have its
-/// pending audio clobbered by a stale failure from the previous one. Returns
-/// whether the write happened.
-fn store_pending_if_current(ctx: &AppCtx, gen: u64, wav: Vec<u8>) -> bool {
+/// Stashes `take` as the one the retry button targets, iff `gen` is still the
+/// current take — checked and written atomically under `ctx.phase` (the gen
+/// authority) so a stale failure landing late can't clobber a newer take's.
+fn store_pending_if_current(ctx: &AppCtx, gen: u64, take: TakeRecord) -> bool {
     let _phase_guard = ctx.phase.lock().unwrap();
     if ctx.take_gen.load(Ordering::SeqCst) != gen {
         return false;
     }
-    *ctx.pending_wav.lock().unwrap() = Some(wav);
+    *ctx.pending_take.lock().unwrap() = Some(take);
     true
+}
+
+/// Re-emits the current phase with a new message, without moving the FSM —
+/// used to narrate a rate-limit wait while still Transcribing. Gen-guarded so
+/// a stale take can't overwrite what the user is looking at.
+fn emit_message(ctx: &AppCtx, gen: u64, message: &str) {
+    let phase = {
+        let guard = ctx.phase.lock().unwrap();
+        if ctx.take_gen.load(Ordering::SeqCst) != gen {
+            return;
+        }
+        *guard
+    };
+    let _ = ctx.app.emit(
+        "dictation:state",
+        serde_json::json!({ "phase": phase, "message": message }),
+    );
+}
+
+pub(crate) fn emit_history_changed(ctx: &AppCtx) {
+    let _ = ctx.app.emit("history:changed", serde_json::json!({}));
+}
+
+/// Writes the take's audio to disk and claims a history row for it, before a
+/// single byte goes to Groq. Returns None only if both the file write and the
+/// row insert failed, in which case dictation still proceeds — just without
+/// the safety net.
+fn persist_take(ctx: &AppCtx, gen: u64, wav: &[u8], duration_ms: i64) -> Option<TakeRecord> {
+    let audio_name = match ctx.recordings.save(wav, gen) {
+        Ok(name) => Some(name),
+        Err(e) => {
+            eprintln!("could not save recording audio: {e}");
+            None
+        }
+    };
+    match ctx.history.insert_pending(audio_name.as_deref(), duration_ms) {
+        Ok(row_id) => {
+            emit_history_changed(ctx);
+            Some(TakeRecord { row_id, audio_name })
+        }
+        Err(e) => {
+            eprintln!("could not claim history row: {e}");
+            if let Some(name) = &audio_name {
+                ctx.recordings.remove(name);
+            }
+            None
+        }
+    }
 }
 
 fn show_bubble(ctx: &AppCtx) {
@@ -144,7 +214,9 @@ fn start_recording(ctx: &Arc<AppCtx>) {
     let Some(gen) = begin(ctx, Event::StartRequested, true, None) else {
         return;
     };
-    ctx.pending_wav.lock().unwrap().take();
+    // The previous take's audio and row live on disk now, so dropping the
+    // retry target here costs nothing — history still has it.
+    ctx.pending_take.lock().unwrap().take();
     let app = ctx.app.clone();
     let last_emit = Arc::new(Mutex::new(std::time::Instant::now()));
     let on_amp = Box::new(move |rms: f32| {
@@ -191,73 +263,130 @@ async fn finish(ctx: Arc<AppCtx>, gen: u64) {
         advance(&ctx, gen, Event::Cancel, Some("nič som nepočul"));
         return;
     }
+    let stopped_at = Instant::now();
     let duration_ms = (samples.len() as i64 * 1000) / (rate as i64 * ch.max(1) as i64);
     let wav = audio::prepare_wav(&samples, rate, ch);
-    transcribe_and_deliver(ctx, wav, gen, duration_ms).await;
+    // Audio and history row first, network second — this is the whole point.
+    let take = persist_take(&ctx, gen, &wav, duration_ms);
+    transcribe_and_deliver(ctx, wav, gen, take, Some(stopped_at + INJECT_GRACE)).await;
 }
 
-pub async fn transcribe_and_deliver(ctx: Arc<AppCtx>, wav: Vec<u8>, gen: u64, duration_ms: i64) {
-    let (groq_url, lang, cleanup_enabled, meridian_url, model, cleanup_style) = {
+/// Transcribes, cleans, and delivers a take.
+///
+/// `take` is the already-claimed history row; every outcome updates it, and
+/// the DB writes are deliberately *not* gen-guarded — if the user cancels or
+/// starts a new take mid-flight, the transcript still lands in history rather
+/// than evaporating. Only the FSM and the paste are gen-guarded.
+///
+/// `inject_deadline` is when pasting at the cursor stops being safe. `None`
+/// means always paste (a retry the user asked for explicitly).
+pub async fn transcribe_and_deliver(
+    ctx: Arc<AppCtx>,
+    wav: Vec<u8>,
+    gen: u64,
+    take: Option<TakeRecord>,
+    inject_deadline: Option<Instant>,
+) {
+    let (groq_url, lang, cleanup_enabled) = {
         let s = ctx.settings.read().unwrap();
-        (
-            s.groq_url.clone(),
-            s.language.code(),
-            s.cleanup_enabled,
-            s.meridian_url.clone(),
-            s.cleanup_model.clone(),
-            s.cleanup_style,
-        )
+        (s.groq_url.clone(), s.language.code(), s.cleanup_enabled)
     };
+    let fail = |message: String| {
+        if let Some(t) = &take {
+            let _ = ctx.history.mark_failed(t.row_id, &message);
+            emit_history_changed(&ctx);
+            store_pending_if_current(&ctx, gen, t.clone());
+        }
+        advance(&ctx, gen, Event::Failed, Some(&message));
+    };
+
     let Some(api_key) = settings::groq_api_key(&ctx.settings.read().unwrap()) else {
-        // Only keep the audio if we're still the take in charge — a stale
-        // failure landing late must not clobber a newer take's saved audio.
-        store_pending_if_current(&ctx, gen, wav);
-        advance(&ctx, gen, Event::Failed, Some("chýba Groq API kľúč"));
+        fail("chýba Groq API kľúč".into());
         return;
     };
 
-    // 1. STT
+    // 1. STT — retries rate limits and server errors instead of giving up.
+    ctx.limiter.try_acquire(Priority::Final);
     let stt = SttClient::new(groq_url, api_key);
-    let transcript = match stt.transcribe(wav.clone(), lang).await {
+    let ctx_for_retry = ctx.clone();
+    let transcript = match stt
+        .transcribe_with(wav, lang, RetryPolicy::default(), move |attempt, delay| {
+            emit_message(
+                &ctx_for_retry,
+                gen,
+                &format!(
+                    "limit Groq — skúšam znova o {} s ({attempt}/4)",
+                    delay.as_secs().max(1)
+                ),
+            );
+        })
+        .await
+    {
         Ok(t) => t,
         Err(e) => {
-            store_pending_if_current(&ctx, gen, wav);
-            advance(&ctx, gen, Event::Failed, Some(&format!("prepis zlyhal: {e}")));
+            if e.is_rate_limit() {
+                ctx.limiter.note_rate_limited(e.retry_after());
+            }
+            fail(format!("prepis zlyhal: {e}"));
             return;
         }
     };
     if transcript.text.is_empty() {
+        if let Some(t) = &take {
+            let _ = ctx.history.mark_failed(t.row_id, "prázdny prepis — ticho?");
+            emit_history_changed(&ctx);
+        }
         advance(&ctx, gen, Event::Cancel, Some("nič som nepočul"));
         return;
     }
 
-    // 2. Cleanup (best-effort — spec: never lose text)
+    // 2. Cleanup (best-effort — never lose text)
     let mut note: Option<&str> = None;
-    let final_text = if cleanup_enabled {
-        if !advance(&ctx, gen, Event::TranscriptReady, Some("✨ upravujem text…")) {
-            return; // cancelled meanwhile, or a stale take
-        }
-        match CleanupClient::with_style(meridian_url, model, cleanup_style)
-            .clean(&transcript.text)
-            .await
-        {
-            Ok(cleaned) => cleaned,
-            Err(_) => {
-                note = Some("vložené bez úprav");
-                transcript.text.clone()
+    let cleanup_client =
+        cleanup_enabled.then(|| CleanupClient::for_settings(&ctx.settings.read().unwrap()));
+    let final_text = match cleanup_client {
+        Some(client) => {
+            if !advance(&ctx, gen, Event::TranscriptReady, Some("✨ upravujem text…")) {
+                commit(&ctx, &take, &transcript, &transcript.text);
+                return; // cancelled meanwhile, or a stale take
+            }
+            match client.clean(&transcript.text).await {
+                Ok(cleaned) => cleaned,
+                Err(_) => {
+                    note = Some("vložené bez úprav");
+                    transcript.text.clone()
+                }
             }
         }
-    } else {
-        if apply_for(&ctx, gen, Event::TranscriptReady).is_none() {
-            return; // cancelled meanwhile, or a stale take
+        None => {
+            if apply_for(&ctx, gen, Event::TranscriptReady).is_none() {
+                commit(&ctx, &take, &transcript, &transcript.text);
+                return; // cancelled meanwhile, or a stale take
+            }
+            transcript.text.clone()
         }
-        transcript.text.clone()
     };
+    // Commit before delivering: from here the text is safe in history no
+    // matter what the paste does.
+    commit(&ctx, &take, &transcript, &final_text);
+
     if !advance(&ctx, gen, Event::CleanupDone, None) {
         return; // cancelled meanwhile, or a stale take
     }
 
-    // 3. Inject
+    // 3. Deliver
+    if inject_deadline.is_some_and(|deadline| Instant::now() > deadline) {
+        // The retry outlived the user's attention; pasting now would fire into
+        // whatever they switched to.
+        let _ = crate::inject::copy_only(&final_text);
+        advance(
+            &ctx,
+            gen,
+            Event::Failed,
+            Some("hotové neskoro — text je v schránke a v histórii"),
+        );
+        return;
+    }
     let text_for_inject = final_text.clone();
     let inject_result =
         tauri::async_runtime::spawn_blocking(move || crate::inject::inject_text(&text_for_inject))
@@ -265,14 +394,12 @@ pub async fn transcribe_and_deliver(ctx: Arc<AppCtx>, wav: Vec<u8>, gen: u64, du
             .unwrap_or_else(|e| Err(crate::inject::InjectError::Keystroke(e.to_string())));
     match inject_result {
         Ok(()) => {
-            let _ = ctx.history.insert(
-                &transcript.text,
-                &final_text,
-                transcript.language.as_deref(),
-                duration_ms,
+            advance(
+                &ctx,
+                gen,
+                Event::Injected,
+                Some(note.unwrap_or("✓ vložené — text je aj v schránke")),
             );
-            if advance(&ctx, gen, Event::Injected, Some(note.unwrap_or("✓ vložené — text je aj v schránke"))) {
-            }
         }
         Err(e) => {
             // Never lose text: leave it in the clipboard at minimum,
@@ -288,7 +415,40 @@ pub async fn transcribe_and_deliver(ctx: Arc<AppCtx>, wav: Vec<u8>, gen: u64, du
     }
 }
 
-const PARTIAL_INTERVAL_MS: u64 = 2500;
+/// Writes the finished transcript to the take's history row. Falls back to a
+/// fresh row when the take was never claimed (disk or DB trouble at capture
+/// time) so the text still survives.
+fn commit(
+    ctx: &AppCtx,
+    take: &Option<TakeRecord>,
+    transcript: &crate::stt::Transcript,
+    final_text: &str,
+) {
+    let language = transcript.language.as_deref();
+    match take {
+        Some(t) => {
+            let _ = ctx
+                .history
+                .mark_done(t.row_id, &transcript.text, final_text, language);
+            // Only clear the retry target if it's still this take's — a stale
+            // take finishing late must not disarm a newer take's retry button.
+            let mut pending = ctx.pending_take.lock().unwrap();
+            if pending.as_ref().is_some_and(|p| p.row_id == t.row_id) {
+                pending.take();
+            }
+        }
+        None => {
+            let _ = ctx.history.insert(&transcript.text, final_text, language, 0);
+        }
+    }
+    emit_history_changed(ctx);
+}
+
+/// Every preview is a full Groq request against the same per-minute quota as
+/// the transcription the user is waiting for. At 2.5 s this alone could push a
+/// single long take past the free tier's limit; 8 s keeps the preview useful
+/// while leaving the quota to the work that matters.
+const PARTIAL_INTERVAL_MS: u64 = 8000;
 /// Don't bother transcribing less than 1 s of audio.
 const PARTIAL_MIN_SECS: f32 = 1.0;
 /// Locked-mode takes auto-stop at this length so a forgotten hotkey doesn't
@@ -296,7 +456,7 @@ const PARTIAL_MIN_SECS: f32 = 1.0;
 const MAX_TAKE_SECS: f32 = 300.0;
 /// Partial uploads only cover the tail of a long take — bounds upload cost
 /// as the take grows; the final pass still transcribes the full audio.
-const PARTIAL_WINDOW_SECS: f32 = 25.0;
+const PARTIAL_WINDOW_SECS: f32 = 15.0;
 
 fn spawn_partial_loop(ctx: Arc<AppCtx>, gen: u64) {
     tauri::async_runtime::spawn(async move {
@@ -304,6 +464,10 @@ fn spawn_partial_loop(ctx: Arc<AppCtx>, gen: u64) {
             tokio::time::interval(std::time::Duration::from_millis(PARTIAL_INTERVAL_MS));
         interval.tick().await; // first tick fires immediately; skip it
         let mut auto_stop_fired = false;
+        // Once Groq has pushed back during this take, the preview stays off
+        // for good — the limiter's cooldown expiring must not restart the very
+        // traffic that caused the 429 while the user is still speaking.
+        let partials_off = Arc::new(AtomicBool::new(false));
         loop {
             interval.tick().await;
             // Phase check alone isn't enough: a new take could already be
@@ -328,7 +492,12 @@ fn spawn_partial_loop(ctx: Arc<AppCtx>, gen: u64) {
                 std::thread::spawn(move || handle_signal(ctx2, HotkeySignal::Stop));
                 continue;
             }
-            if elapsed < PARTIAL_MIN_SECS {
+            if elapsed < PARTIAL_MIN_SECS || partials_off.load(Ordering::SeqCst) {
+                continue;
+            }
+            // Expendable by design: if the quota is running low, the preview
+            // is what gives way, never the final transcription.
+            if !ctx.limiter.try_acquire(Priority::Partial) {
                 continue;
             }
             // One partial request at a time; skip a beat when Groq is slow.
@@ -355,18 +524,31 @@ fn spawn_partial_loop(ctx: Arc<AppCtx>, gen: u64) {
                 continue;
             };
             let ctx2 = ctx.clone();
+            let partials_off = partials_off.clone();
             tauri::async_runtime::spawn(async move {
                 let wav = audio::prepare_wav(&windowed, rate, ch);
                 let stt = SttClient::new(groq_url, api_key);
-                if let Ok(t) = stt.transcribe(wav, lang).await {
-                    // Only show it if we're still recording the same take.
-                    let still_current = *ctx2.phase.lock().unwrap() == Phase::Recording
-                        && ctx2.take_gen.load(Ordering::SeqCst) == gen;
-                    if still_current && !t.text.is_empty() {
-                        let _ = ctx2
-                            .app
-                            .emit("dictation:partial", serde_json::json!({ "text": t.text }));
+                // No retries here: a preview that missed its slot is worthless
+                // by the time a backoff would have finished.
+                match stt
+                    .transcribe_with(wav, lang, RetryPolicy::none(), |_, _| {})
+                    .await
+                {
+                    Ok(t) => {
+                        // Only show it if we're still recording the same take.
+                        let still_current = *ctx2.phase.lock().unwrap() == Phase::Recording
+                            && ctx2.take_gen.load(Ordering::SeqCst) == gen;
+                        if still_current && !t.text.is_empty() {
+                            let _ = ctx2
+                                .app
+                                .emit("dictation:partial", serde_json::json!({ "text": t.text }));
+                        }
                     }
+                    Err(e) if e.is_rate_limit() => {
+                        ctx2.limiter.note_rate_limited(e.retry_after());
+                        partials_off.store(true, Ordering::SeqCst);
+                    }
+                    Err(_) => {}
                 }
                 ctx2.partial_inflight.store(false, Ordering::SeqCst);
             });

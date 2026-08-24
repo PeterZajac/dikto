@@ -49,7 +49,12 @@ pub struct Settings {
     /// keeping it here avoids the cross-app keychain prompts that came with
     /// a system keyring entry.
     pub groq_api_key: String,
+    /// Days a completed dictation keeps its WAV before the audio is pruned.
+    /// 0 means keep forever. Failed and pending takes are never pruned.
+    pub audio_retention_days: u32,
 }
+
+pub const DEFAULT_AUDIO_RETENTION_DAYS: u32 = 7;
 
 impl Default for Settings {
     fn default() -> Self {
@@ -67,6 +72,7 @@ impl Default for Settings {
             bubble_pos: None,
             autostart: false,
             groq_api_key: String::new(),
+            audio_retention_days: DEFAULT_AUDIO_RETENTION_DAYS,
         }
     }
 }
@@ -104,6 +110,7 @@ impl Settings {
         if !is_local_http(&self.meridian_url) && !self.meridian_url.starts_with("https://") {
             self.meridian_url = Settings::default().meridian_url;
         }
+        self.audio_retention_days = self.audio_retention_days.min(3650);
         self
     }
 }
@@ -176,6 +183,7 @@ mod tests {
         assert_eq!(s.bubble_pos, None);
         assert!(!s.autostart);
         assert_eq!(s.groq_api_key, "");
+        assert_eq!(s.audio_retention_days, DEFAULT_AUDIO_RETENTION_DAYS);
     }
 
     #[test]
@@ -197,6 +205,19 @@ mod tests {
         assert_eq!(s.bubble_pos, None);
         assert!(!s.autostart);
         assert_eq!(s.groq_api_key, "");
+        assert_eq!(s.audio_retention_days, DEFAULT_AUDIO_RETENTION_DAYS);
+    }
+
+    #[test]
+    fn absurd_retention_is_clamped() {
+        let s = Settings { audio_retention_days: u32::MAX, ..Settings::default() };
+        assert_eq!(s.sanitized().audio_retention_days, 3650);
+    }
+
+    #[test]
+    fn zero_retention_means_keep_forever_and_survives_sanitize() {
+        let s = Settings { audio_retention_days: 0, ..Settings::default() };
+        assert_eq!(s.sanitized().audio_retention_days, 0);
     }
 
     #[test]

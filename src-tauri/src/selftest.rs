@@ -188,9 +188,7 @@ async fn stage_stt(
 /// Meridian cleanup against the configured `meridian_url`. Unreachable/timeout
 /// is a SKIP (Meridian is optional infra), not a FAIL.
 async fn stage_cleanup(s: &settings::Settings, text: &str) -> Outcome {
-    let client =
-        cleanup::CleanupClient::with_style(s.meridian_url.clone(), s.cleanup_model.clone(), s.cleanup_style);
-    match client.clean(text).await {
+    match cleanup::CleanupClient::for_settings(s).clean(text).await {
         Ok(cleaned) => Outcome::pass(format!("cleaned: {cleaned:?}")),
         Err(cleanup::CleanupError::Network(e)) => Outcome::skip(format!("Meridian unreachable: {e}")),
         Err(e) => Outcome::fail(format!("Meridian error: {e}")),

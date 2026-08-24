@@ -19,13 +19,18 @@ pub async fn retry_transcription(ctx: State<'_, Arc<AppCtx>>) -> Result<(), Stri
     let Some(gen) = pipeline::begin(&ctx, Event::RetryRequested, true, None) else {
         return Err("retry nie je možný teraz".into());
     };
-    let wav = ctx.pending_wav.lock().unwrap().take();
-    let Some(wav) = wav else {
+    let take = ctx.pending_take.lock().unwrap().clone();
+    let Some(wav) = take.as_ref().and_then(|t| load_take_audio(&ctx, t)) else {
         pipeline::advance(&ctx, gen, Event::Failed, Some("žiadne audio na zopakovanie"));
         return Err("žiadne audio na zopakovanie".into());
     };
-    pipeline::transcribe_and_deliver(ctx.inner().clone(), wav, gen, 0).await;
+    // No deadline: the user just asked for this, so paste wherever they are.
+    pipeline::transcribe_and_deliver(ctx.inner().clone(), wav, gen, take, None).await;
     Ok(())
+}
+
+fn load_take_audio(ctx: &AppCtx, take: &pipeline::TakeRecord) -> Option<Vec<u8>> {
+    ctx.recordings.read(take.audio_name.as_deref()?).ok()
 }
 
 #[tauri::command]
@@ -114,6 +119,18 @@ pub async fn meridian_status(ctx: State<'_, Arc<AppCtx>>) -> Result<bool, ()> {
     Ok(crate::cleanup::CleanupClient::new(url, model).is_reachable().await)
 }
 
+/// Round-trips a one-token completion through Meridian, so the Settings page
+/// can prove the model actually answers instead of just that something is
+/// listening on the port.
+#[tauri::command]
+pub async fn test_cleanup(ctx: State<'_, Arc<AppCtx>>) -> Result<(), String> {
+    let client = {
+        let s = ctx.settings.read().unwrap();
+        crate::cleanup::CleanupClient::for_settings(&s)
+    };
+    client.probe().await.map_err(|e| e.to_string())
+}
+
 #[tauri::command]
 pub fn finish_wizard(ctx: State<'_, Arc<AppCtx>>) -> Result<(), String> {
     let mut new = ctx.settings.read().unwrap().clone();
@@ -134,12 +151,116 @@ pub fn history_list(
 
 #[tauri::command]
 pub fn history_delete(ctx: State<'_, Arc<AppCtx>>, id: i64) {
-    let _ = ctx.history.delete(id);
+    if let Ok(Some(audio)) = ctx.history.delete(id) {
+        ctx.recordings.remove(&audio);
+    }
 }
 
 #[tauri::command]
 pub fn history_clear(ctx: State<'_, Arc<AppCtx>>) {
-    let _ = ctx.history.clear();
+    if let Ok(audio) = ctx.history.clear() {
+        ctx.recordings.remove_all(audio);
+    }
+}
+
+/// Re-transcribes a stored recording straight into its history row. Runs
+/// outside the dictation FSM on purpose: it's a background repair of an old
+/// row, not a live take, so it works while idle and never pastes anywhere.
+#[tauri::command]
+pub async fn history_retry(ctx: State<'_, Arc<AppCtx>>, id: i64) -> Result<(), String> {
+    let row = ctx
+        .history
+        .get(id)
+        .map_err(|e| e.to_string())?
+        .ok_or("záznam neexistuje")?;
+    let audio = row.audio_path.ok_or("k tomuto záznamu nemáme audio")?;
+    let wav = ctx.recordings.read(&audio).map_err(|_| "audio sa nedá načítať")?;
+
+    let (url, lang) = {
+        let s = ctx.settings.read().unwrap();
+        (s.groq_url.clone(), s.language.code())
+    };
+    let key = settings::groq_api_key(&ctx.settings.read().unwrap()).ok_or("chýba Groq API kľúč")?;
+
+    ctx.limiter.try_acquire(crate::ratelimit::Priority::Final);
+    let result = crate::stt::SttClient::new(url, key)
+        .transcribe_with(wav, lang, crate::stt::RetryPolicy::default(), |_, _| {})
+        .await;
+    let outcome = match result {
+        Ok(t) if !t.text.is_empty() => {
+            let cleaned = clean_or_raw(&ctx, &t.text).await;
+            ctx.history
+                .mark_done(id, &t.text, &cleaned, t.language.as_deref())
+                .map_err(|e| e.to_string())
+        }
+        Ok(_) => ctx
+            .history
+            .mark_failed(id, "prázdny prepis — ticho?")
+            .map_err(|e| e.to_string()),
+        Err(e) => {
+            if e.is_rate_limit() {
+                ctx.limiter.note_rate_limited(e.retry_after());
+            }
+            let message = format!("prepis zlyhal: {e}");
+            let _ = ctx.history.mark_failed(id, &message);
+            Err(message)
+        }
+    };
+    pipeline::emit_history_changed(&ctx);
+    outcome.map(|_| ())
+}
+
+/// Cleanup for the history-retry path: best-effort, falling back to the raw
+/// transcript exactly like the live pipeline does.
+async fn clean_or_raw(ctx: &AppCtx, raw: &str) -> String {
+    let client = {
+        let s = ctx.settings.read().unwrap();
+        if !s.cleanup_enabled {
+            return raw.to_string();
+        }
+        crate::cleanup::CleanupClient::for_settings(&s)
+    };
+    client.clean(raw).await.unwrap_or_else(|_| raw.to_string())
+}
+
+fn audio_path_of(ctx: &AppCtx, id: i64) -> Option<std::path::PathBuf> {
+    let audio = ctx.history.get(id).ok()??.audio_path?;
+    let path = ctx.recordings.path(&audio)?;
+    path.exists().then_some(path)
+}
+
+/// Absolute path of a stored recording, for the frontend's "save as" flow.
+#[tauri::command]
+pub fn history_audio_path(ctx: State<'_, Arc<AppCtx>>, id: i64) -> Option<String> {
+    audio_path_of(&ctx, id).map(|p| p.to_string_lossy().into_owned())
+}
+
+/// Copies a stored recording into the user's Downloads folder and returns the
+/// path it landed on, so a dictation the API never managed to transcribe can
+/// still be rescued out of the app.
+#[tauri::command]
+pub fn history_export_audio(ctx: State<'_, Arc<AppCtx>>, id: i64) -> Result<String, String> {
+    let src = audio_path_of(&ctx, id).ok_or("k tomuto záznamu nemáme audio")?;
+    let ts = ctx.history.get(id).ok().flatten().map(|d| d.ts).unwrap_or_default();
+    let dir = dirs::download_dir()
+        .or_else(dirs::home_dir)
+        .ok_or("neviem nájsť priečinok Stiahnuté")?;
+    let dest = free_path(&dir, &format!("dikto-{ts}"));
+    std::fs::copy(&src, &dest).map_err(|e| e.to_string())?;
+    Ok(dest.to_string_lossy().into_owned())
+}
+
+/// `<dir>/<stem>.wav`, with a numeric suffix if that name is taken — an export
+/// must never quietly overwrite a file the user already has.
+fn free_path(dir: &std::path::Path, stem: &str) -> std::path::PathBuf {
+    let first = dir.join(format!("{stem}.wav"));
+    if !first.exists() {
+        return first;
+    }
+    (1..)
+        .map(|n| dir.join(format!("{stem}-{n}.wav")))
+        .find(|p| !p.exists())
+        .expect("an unused suffix always exists")
 }
 
 #[tauri::command]
