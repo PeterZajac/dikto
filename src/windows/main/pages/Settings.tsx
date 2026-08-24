@@ -52,6 +52,12 @@ const CLEANUP_STYLE_OPTIONS: Array<{ id: CleanupStyle; label: string }> = [
   { id: "strong", label: "silné" },
 ];
 
+const RETENTION_OPTIONS: Array<{ id: number; label: string }> = [
+  { id: 7, label: "7 dní" },
+  { id: 30, label: "30 dní" },
+  { id: 0, label: "navždy" },
+];
+
 export default function SettingsPage() {
   const [settings, setSettings] = useState<Settings | null>(null);
   const [loaded, setLoaded] = useState(false);
@@ -206,6 +212,7 @@ export default function SettingsPage() {
     if (s) commit({ cleanup_enabled: !s.cleanup_enabled });
   };
   const setCleanupStyle = (cleanup_style: CleanupStyle) => commit({ cleanup_style });
+  const setRetention = (audio_retention_days: number) => commit({ audio_retention_days });
 
   const [modelDraft, setModelDraft] = useState("");
   const [meridianDraft, setMeridianDraft] = useState("");
@@ -214,11 +221,30 @@ export default function SettingsPage() {
   const modelTimer = useRef<number | undefined>(undefined);
   const meridianTimer = useRef<number | undefined>(undefined);
 
+  // Result of the last "Otestovať" click, or null when nothing has been tried
+  // since the Meridian URL changed.
+  const [cleanupTest, setCleanupTest] = useState<{ ok: boolean; text: string } | null>(null);
+  const [testingCleanup, setTestingCleanup] = useState(false);
+
   useEffect(() => {
     if (!settings) return;
     if (!modelFocused.current) setModelDraft(settings.cleanup_model);
     if (!meridianFocused.current) setMeridianDraft(settings.meridian_url);
   }, [settings]);
+
+  const runCleanupTest = () => {
+    // Meridian URL edits are debounced; land them before the backend reads it.
+    flushMeridian();
+    setTestingCleanup(true);
+    setCleanupTest(null);
+    window.setTimeout(() => {
+      api
+        .testCleanup()
+        .then(() => setCleanupTest({ ok: true, text: "Funguje — model odpovedal." }))
+        .catch((e) => setCleanupTest({ ok: false, text: typeof e === "string" ? e : "Test zlyhal." }))
+        .finally(() => setTestingCleanup(false));
+    }, 50);
+  };
 
   const [meridianStatus, setMeridianStatus] = useState<MeridianStatus>("unknown");
   const refreshMeridian = useCallback(() => {
@@ -251,6 +277,7 @@ export default function SettingsPage() {
     window.clearTimeout(meridianTimer.current);
     meridianTimer.current = window.setTimeout(() => {
       commit({ meridian_url: value });
+      setCleanupTest(null);
       refreshMeridian();
     }, DEBOUNCE_MS);
   };
@@ -435,7 +462,8 @@ export default function SettingsPage() {
         <div className="settings-section__head">
           <h2 className="settings-section__title">Čistenie textu</h2>
           <p className="settings-section__desc">
-            Meridian (Claude) doladí interpunkciu a plynulosť prepisu pred vložením.
+            Claude doladí interpunkciu a plynulosť prepisu pred vložením. Voliteľné — bez neho sa
+            vloží surový prepis.
           </p>
         </div>
         <div className="settings-row">
@@ -444,6 +472,7 @@ export default function SettingsPage() {
             <Toggle checked={settings.cleanup_enabled} onChange={toggleCleanup} label="Čistenie textu" />
           </div>
         </div>
+
 
         <div className="settings-row">
           <div className="settings-row__text">
@@ -464,8 +493,7 @@ export default function SettingsPage() {
         <div className="settings-row settings-row--column">
           <span className="settings-row__label">Claude model</span>
           <span className="settings-row__desc">
-            Čistenie prepísaného textu — interpunkcia, výplňové slová. Beží cez Meridian (tvoje Claude
-            predplatné), nie cez Groq.
+            Čistenie prepísaného textu — interpunkcia, výplňové slová. Nejde cez Groq.
           </span>
           <div className="settings-row__control">
             <input
@@ -499,6 +527,9 @@ export default function SettingsPage() {
                 placeholder="http://127.0.0.1:3456"
                 spellCheck={false}
               />
+              <button type="button" className="btn" disabled={testingCleanup} onClick={runCleanupTest}>
+                {testingCleanup ? "Testujem…" : "Otestovať"}
+              </button>
             </div>
           </div>
         </div>
@@ -509,6 +540,44 @@ export default function SettingsPage() {
             {meridianStatus === "offline" && "Meridian nedostupný"}
             {meridianStatus === "unknown" && "Zisťujem stav…"}
           </span>
+        </div>
+        {/* The dot only proves something is listening; this proves it answers. */}
+        {cleanupTest && (
+          <div className="settings-row settings-row--tight">
+            <span className="status-line">
+              <span
+                className={`status-dot status-dot--${cleanupTest.ok ? "ok" : "fail"}`}
+                aria-hidden
+              />
+              {cleanupTest.text}
+            </span>
+          </div>
+        )}
+      </section>
+
+      <section className="settings-section">
+        <div className="settings-section__head">
+          <h2 className="settings-section__title">Nahrávky</h2>
+          <p className="settings-section__desc">
+            Každé diktovanie sa uloží na disk ešte pred prepisom, takže sa nestratí ani keď Groq
+            zlyhá. Text v histórii ostáva navždy — toto riadi len to, ako dlho sa držia WAV súbory.
+          </p>
+        </div>
+        <div className="settings-row">
+          <div className="settings-row__text">
+            <span className="settings-row__label">Držať audio</span>
+            <span className="settings-row__desc">
+              Zlyhané a neprepísané nahrávky sa nemažú nikdy — tie zmažeš len ručne v histórii.
+            </span>
+          </div>
+          <div className="settings-row__control">
+            <RadioGroup
+              value={settings.audio_retention_days}
+              options={RETENTION_OPTIONS}
+              onChange={setRetention}
+              name="audio-retention"
+            />
+          </div>
         </div>
       </section>
 
@@ -625,7 +694,7 @@ function Toggle({
   );
 }
 
-function RadioGroup<T extends string>({
+function RadioGroup<T extends string | number>({
   value,
   options,
   onChange,

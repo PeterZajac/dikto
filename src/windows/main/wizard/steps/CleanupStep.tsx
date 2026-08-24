@@ -3,7 +3,11 @@ import { api } from "../../../../shared/ipc";
 
 type Status = "checking" | "online" | "offline";
 
-export default function MeridianStep({ onStatusChange }: { onStatusChange: (online: boolean) => void }) {
+/**
+ * Optional cleanup step: Claude tidies the transcript through a local Meridian
+ * proxy. Skippable — dictation works fine on the raw transcript.
+ */
+export default function CleanupStep({ onStatusChange }: { onStatusChange: (ready: boolean) => void }) {
   const [status, setStatus] = useState<Status>("checking");
 
   const check = () => {
@@ -24,11 +28,11 @@ export default function MeridianStep({ onStatusChange }: { onStatusChange: (onli
 
   return (
     <>
-      <p className="wizard-step__eyebrow">Meridian (voliteľné)</p>
+      <p className="wizard-step__eyebrow">Čistenie textu (voliteľné)</p>
       <h1 className="wizard-step__title">Doladenie textu</h1>
       <p className="wizard-step__desc">
-        Meridian pred vložením opraví interpunkciu a plynulosť prepisu pomocou Claude. Je to voliteľné —
-        bez neho sa vloží surový prepis z Whisperu.
+        Meridian pred vložením opraví interpunkciu a plynulosť prepisu pomocou Claude. Je to
+        voliteľné — bez neho sa vloží surový prepis z Whisperu.
       </p>
 
       <div className="wizard-row">
@@ -53,8 +57,8 @@ export default function MeridianStep({ onStatusChange }: { onStatusChange: (onli
 
       {status === "offline" && (
         <p className="wizard-note">
-          Spusti Meridian v termináli príkazom <code>meridian</code> a klikni na „Skúsiť znova". Alebo
-          jednoducho pokračuj ďalej — diktovanie bude fungovať aj bez neho.
+          Spusti Meridian v termináli príkazom <code>meridian</code> a klikni na „Skúsiť znova".
+          Alebo jednoducho pokračuj ďalej — diktovanie bude fungovať aj bez neho.
         </p>
       )}
     </>

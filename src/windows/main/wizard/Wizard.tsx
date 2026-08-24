@@ -3,20 +3,20 @@ import { api } from "../../../shared/ipc";
 import WelcomeStep from "./steps/WelcomeStep";
 import PermissionsStep from "./steps/PermissionsStep";
 import GroqKeyStep from "./steps/GroqKeyStep";
-import MeridianStep from "./steps/MeridianStep";
+import CleanupStep from "./steps/CleanupStep";
 import TrialStep from "./steps/TrialStep";
 import "./wizard.css";
 
 const STEP_COUNT = 5;
 const GROQ_STEP = 2;
-const MERIDIAN_STEP = 3;
+const CLEANUP_STEP = 3;
 const TRIAL_STEP = 4;
 
 export default function Wizard({ onFinish }: { onFinish: () => void }) {
   const [step, setStep] = useState(0);
   const [finishing, setFinishing] = useState(false);
   const [hasGroqKey, setHasGroqKey] = useState(false);
-  const [meridianOnline, setMeridianOnline] = useState(true);
+  const [cleanupReady, setCleanupReady] = useState(true);
   const [trialSuccess, setTrialSuccess] = useState(false);
 
   const finish = () => {
@@ -34,7 +34,7 @@ export default function Wizard({ onFinish }: { onFinish: () => void }) {
   const primaryLabel = (): string => {
     if (step === TRIAL_STEP) return trialSuccess ? "Dokončiť" : "Preskočiť";
     if (step === GROQ_STEP) return hasGroqKey ? "Ďalej" : "Preskočiť";
-    if (step === MERIDIAN_STEP) return meridianOnline ? "Ďalej" : "Preskočiť";
+    if (step === CLEANUP_STEP) return cleanupReady ? "Ďalej" : "Preskočiť";
     return "Ďalej";
   };
 
@@ -55,7 +55,7 @@ export default function Wizard({ onFinish }: { onFinish: () => void }) {
           {step === 0 && <WelcomeStep />}
           {step === 1 && <PermissionsStep />}
           {step === GROQ_STEP && <GroqKeyStep onHasKeyChange={setHasGroqKey} />}
-          {step === MERIDIAN_STEP && <MeridianStep onStatusChange={setMeridianOnline} />}
+          {step === CLEANUP_STEP && <CleanupStep onStatusChange={setCleanupReady} />}
           {step === TRIAL_STEP && <TrialStep onSuccess={() => setTrialSuccess(true)} />}
         </div>
 

@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type CSSProperties } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+import { LogicalSize } from "@tauri-apps/api/dpi";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import {
   AmplitudePayload,
@@ -15,8 +16,17 @@ import "./bubble.css";
 
 const BAR_COUNT = 24;
 
+/** The bubble's normal footprint, matching tauri.conf.json. */
+const SIZE_DEFAULT = { width: 340, height: 64 };
+/** Errors are full API messages; the window has to grow or they get cut off. */
+const SIZE_ERROR = { width: 460, height: 190 };
+
 const cancel = () => void invoke("cancel_dictation");
 const retry = () => void invoke("retry_transcription");
+
+/** Failures where the audio is still on disk and re-running STT could fix it. */
+const isRetryable = (message: string | null) =>
+  !!message && (message.startsWith("prepis zlyhal") || message.startsWith("chýba Groq"));
 
 export default function Bubble() {
   const [phase, setPhase] = useState<Phase>("idle");
@@ -99,6 +109,16 @@ export default function Bubble() {
     void getCurrentWindow().setIgnoreCursorEvents(isIdleDot);
   }, [isIdleDot]);
 
+  // A long error would be clipped by the window frame no matter how the CSS
+  // wraps it, so grow the window itself while one is showing. This needs
+  // `resizable: true` in tauri.conf.json — tao pins min=max size otherwise and
+  // setSize silently does nothing. The macOS panel style mask carries no
+  // resizable bit, so the user still can't drag the bubble bigger.
+  useEffect(() => {
+    const { width, height } = phase === "error" ? SIZE_ERROR : SIZE_DEFAULT;
+    void getCurrentWindow().setSize(new LogicalSize(width, height));
+  }, [phase]);
+
   const mmss = `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`;
 
   if (isIdleDot) {
@@ -126,7 +146,10 @@ export default function Bubble() {
           )}
         </button>
       )}
-      {phase === "transcribing" && <span className="bubble__status">prepisujem…</span>}
+      {/* The message carries rate-limit retry progress; fall back when idle. */}
+      {phase === "transcribing" && (
+        <span className="bubble__status">{message ?? "prepisujem…"}</span>
+      )}
       {phase === "cleaning" && (
         <span className="bubble__status">{message ?? "✨ upravujem text…"}</span>
       )}
@@ -135,17 +158,20 @@ export default function Bubble() {
         <span className="bubble__status bubble__status--done">{message}</span>
       )}
       {phase === "error" && (
-        <>
+        <div className="bubble__error">
           <span className="bubble__status bubble__status--error">⚠ {message}</span>
-          {message?.startsWith("prepis zlyhal") && (
-            <button className="bubble__retry" onClick={handleRetry} disabled={retrying}>
-              skúsiť znova
+          <div className="bubble__error-actions">
+            {isRetryable(message) && (
+              <button className="bubble__retry" onClick={handleRetry} disabled={retrying}>
+                skúsiť znova
+              </button>
+            )}
+            <span className="bubble__error-hint">nahrávka je uložená v histórii</span>
+            <button className="bubble__retry" onClick={cancel}>
+              ✕
             </button>
-          )}
-          <button className="bubble__retry" onClick={cancel}>
-            ✕
-          </button>
-        </>
+          </div>
+        </div>
       )}
     </div>
   );

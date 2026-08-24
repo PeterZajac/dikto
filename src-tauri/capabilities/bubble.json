@@ -10,6 +10,7 @@
     "core:window:allow-start-dragging",
     "allow-cancel-dictation",
     "allow-retry-transcription",
-    "core:window:allow-set-ignore-cursor-events"
+    "core:window:allow-set-ignore-cursor-events",
+    "core:window:allow-set-size"
   ]
 }

@@ -19,7 +19,12 @@ export interface Settings {
   bubble_pos: [number, number] | null;
   autostart: boolean;
   groq_api_key: string;
+  /** Days a finished dictation keeps its WAV. 0 = keep forever. */
+  audio_retention_days: number;
 }
+
+/** "pending" = recorded, not transcribed yet. "failed" = audio kept, retryable. */
+export type DictationStatus = "pending" | "done" | "failed";
 
 export interface Dictation {
   id: number;
@@ -28,6 +33,9 @@ export interface Dictation {
   clean: string;
   language: string | null;
   duration_ms: number;
+  status: DictationStatus;
+  audio_path: string | null;
+  error: string | null;
 }
 
 export interface PermissionsStatus {
@@ -47,6 +55,13 @@ export const api = {
     invoke<Dictation[]>("history_list", { search: search ?? null, limit: limit ?? null }),
   historyDelete: (id: number) => invoke<void>("history_delete", { id }),
   historyClear: () => invoke<void>("history_clear"),
+  // Re-transcribes a stored recording in place; never pastes anywhere.
+  historyRetry: (id: number) => invoke<void>("history_retry", { id }),
+  historyAudioPath: (id: number) => invoke<string | null>("history_audio_path", { id }),
+  // Saves the WAV into the user's Downloads folder, returning the final path.
+  historyExportAudio: (id: number) => invoke<string>("history_export_audio", { id }),
+  // One-token round trip through Meridian — proves it answers, not just listens.
+  testCleanup: () => invoke<void>("test_cleanup"),
   permissionsStatus: () => invoke<PermissionsStatus>("permissions_status"),
   openPrivacySettings: (pane: PrivacyPane) => invoke<void>("open_privacy_settings", { pane }),
   // Hard-allowlisted server-side to https://console.groq.com — see open_url in commands.rs.

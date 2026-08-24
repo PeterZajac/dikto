@@ -2,12 +2,13 @@ import { useCallback, useEffect, useRef, useState, type ReactNode } from "react"
 import { listen } from "@tauri-apps/api/event";
 import { api } from "../../../shared/ipc";
 import type { Dictation } from "../../../shared/ipc";
-import { EVENT_STATE, type StatePayload } from "../../../shared/events";
+import { EVENT_HISTORY_CHANGED } from "../../../shared/events";
 import "./history.css";
 
 const SEARCH_DEBOUNCE_MS = 250;
 const CLEAR_CONFIRM_MS = 3000;
 const COPY_FEEDBACK_MS = 1500;
+const EXPORT_FEEDBACK_MS = 4000;
 
 export default function HistoryPage() {
   const [items, setItems] = useState<Dictation[] | null>(null);
@@ -17,6 +18,8 @@ export default function HistoryPage() {
   const [expandedIds, setExpandedIds] = useState<Set<number>>(new Set());
   const [copiedId, setCopiedId] = useState<number | null>(null);
   const [clearArmed, setClearArmed] = useState(false);
+  const [retryingIds, setRetryingIds] = useState<Set<number>>(new Set());
+  const [rowNotice, setRowNotice] = useState<{ id: number; text: string } | null>(null);
 
   const searchTermRef = useRef("");
   searchTermRef.current = searchTerm;
@@ -24,6 +27,7 @@ export default function HistoryPage() {
   const searchDebounceRef = useRef<number | undefined>(undefined);
   const copyTimerRef = useRef<number | undefined>(undefined);
   const clearArmedTimerRef = useRef<number | undefined>(undefined);
+  const noticeTimerRef = useRef<number | undefined>(undefined);
 
   // ---- debounce the raw query into a committed search term ----
   useEffect(() => {
@@ -67,14 +71,13 @@ export default function HistoryPage() {
     return () => window.removeEventListener("focus", refetch);
   }, [refetch]);
 
-  // ---- refetch right after a dictation lands (phase idle, "✓ vložené") ----
+  // ---- refetch whenever the backend touches a row ----
+  // Covers the whole lifecycle, not just a successful paste: a take shows up
+  // here the moment recording stops, then updates as it succeeds or fails.
   useEffect(() => {
     let cancelled = false;
     let unlisten: (() => void) | undefined;
-    listen<StatePayload>(EVENT_STATE, (event) => {
-      const { phase, message } = event.payload;
-      if (phase === "idle" && message?.includes("vložené")) refetch();
-    }).then((u) => {
+    listen(EVENT_HISTORY_CHANGED, () => refetch()).then((u) => {
       if (cancelled) u();
       else unlisten = u;
     });
@@ -88,9 +91,42 @@ export default function HistoryPage() {
     () => () => {
       window.clearTimeout(copyTimerRef.current);
       window.clearTimeout(clearArmedTimerRef.current);
+      window.clearTimeout(noticeTimerRef.current);
     },
     [],
   );
+
+  const showNotice = useCallback((id: number, text: string) => {
+    setRowNotice({ id, text });
+    window.clearTimeout(noticeTimerRef.current);
+    noticeTimerRef.current = window.setTimeout(() => setRowNotice(null), EXPORT_FEEDBACK_MS);
+  }, []);
+
+  const markRetrying = (id: number, active: boolean) =>
+    setRetryingIds((prev) => {
+      const next = new Set(prev);
+      if (active) next.add(id);
+      else next.delete(id);
+      return next;
+    });
+
+  const handleRetry = (id: number) => {
+    markRetrying(id, true);
+    api
+      .historyRetry(id)
+      .catch((e) => showNotice(id, typeof e === "string" ? e : "prepis znova zlyhal"))
+      .finally(() => {
+        markRetrying(id, false);
+        refetch();
+      });
+  };
+
+  const handleExport = (id: number) => {
+    api
+      .historyExportAudio(id)
+      .then((path) => showNotice(id, `✓ uložené: ${path.split("/").pop() ?? path}`))
+      .catch((e) => showNotice(id, typeof e === "string" ? e : "uloženie zlyhalo"));
+  };
 
   const handleCopy = (id: number, text: string) => {
     navigator.clipboard
@@ -216,10 +252,14 @@ export default function HistoryPage() {
               item={item}
               expanded={expandedIds.has(item.id)}
               copied={copiedId === item.id}
+              retrying={retryingIds.has(item.id)}
+              notice={rowNotice?.id === item.id ? rowNotice.text : null}
               searchTerm={searchTerm}
               onToggleExpand={toggleExpand}
               onCopy={handleCopy}
               onDelete={handleDelete}
+              onRetry={handleRetry}
+              onExport={handleExport}
             />
           ))}
         </ul>
@@ -232,31 +272,60 @@ function HistoryRow({
   item,
   expanded,
   copied,
+  retrying,
+  notice,
   searchTerm,
   onToggleExpand,
   onCopy,
   onDelete,
+  onRetry,
+  onExport,
 }: {
   item: Dictation;
   expanded: boolean;
   copied: boolean;
+  retrying: boolean;
+  notice: string | null;
   searchTerm: string;
   onToggleExpand: (id: number) => void;
   onCopy: (id: number, text: string) => void;
   onDelete: (id: number) => void;
+  onRetry: (id: number) => void;
+  onExport: (id: number) => void;
 }) {
+  const failed = item.status === "failed";
+  const pending = item.status === "pending";
+  const hasText = item.clean.length > 0;
+  const hasAudio = item.audio_path !== null;
+
   return (
-    <li className={`history-row${expanded ? " history-row--expanded" : ""}`}>
+    <li
+      className={`history-row history-row--${item.status}${expanded ? " history-row--expanded" : ""}`}
+    >
       <div className="history-row__main">
-        <p className={`history-row__clean${expanded ? " history-row__clean--full" : ""}`}>
-          {highlightMatch(item.clean, searchTerm)}
-        </p>
+        {hasText ? (
+          <p className={`history-row__clean${expanded ? " history-row__clean--full" : ""}`}>
+            {highlightMatch(item.clean, searchTerm)}
+          </p>
+        ) : (
+          <p className="history-row__clean history-row__clean--placeholder">
+            {pending ? "Prepisujem…" : "Bez prepisu — nahrávka je uložená"}
+          </p>
+        )}
+
         <div className="history-row__meta">
+          {failed && <span className="status-badge status-badge--failed">Zlyhalo</span>}
+          {pending && <span className="status-badge status-badge--pending">Prepisujem</span>}
           <span>{formatRelative(item.ts)}</span>
           {item.language && <span className="lang-badge">{item.language.toUpperCase()}</span>}
           <span className="history-row__duration">{formatDuration(item.duration_ms)}</span>
+          {hasAudio && <span className="history-row__audio" title="Nahrávka je uložená">♪</span>}
         </div>
-        {expanded && (
+
+        {failed && item.error && <p className="history-row__error">{item.error}</p>}
+        {notice && <p className="history-row__notice">{notice}</p>}
+
+        {expanded && hasText && (
           <div className="history-row__raw">
             <span className="history-row__raw-label">Surový prepis</span>
             <p className="history-row__raw-text">{item.raw}</p>
@@ -265,12 +334,31 @@ function HistoryRow({
       </div>
 
       <div className="history-row__actions">
-        <button type="button" className="row-action" onClick={() => onCopy(item.id, item.clean)}>
-          {copied ? "✓ Skopírované" : "Kopírovať"}
-        </button>
-        <button type="button" className="row-action" onClick={() => onToggleExpand(item.id)}>
-          {expanded ? "Zbaliť" : "Rozbaliť"}
-        </button>
+        {(failed || pending) && hasAudio && (
+          <button
+            type="button"
+            className="row-action row-action--primary"
+            disabled={retrying}
+            onClick={() => onRetry(item.id)}
+          >
+            {retrying ? "Prepisujem…" : "Prepísať znova"}
+          </button>
+        )}
+        {hasAudio && (
+          <button type="button" className="row-action" onClick={() => onExport(item.id)}>
+            Stiahnuť audio
+          </button>
+        )}
+        {hasText && (
+          <button type="button" className="row-action" onClick={() => onCopy(item.id, item.clean)}>
+            {copied ? "✓ Skopírované" : "Kopírovať"}
+          </button>
+        )}
+        {hasText && (
+          <button type="button" className="row-action" onClick={() => onToggleExpand(item.id)}>
+            {expanded ? "Zbaliť" : "Rozbaliť"}
+          </button>
+        )}
         <button type="button" className="row-action row-action--danger" onClick={() => onDelete(item.id)}>
           Zmazať
         </button>
