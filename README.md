@@ -24,8 +24,17 @@ instance for text cleanup — with nothing else leaving your machine.
 - **Floating bubble** — shows a live waveform and transcript while recording,
   remembers where you last dragged it, stays out of the way of fullscreen
   apps.
+- **Nothing gets lost** — the recording is written to disk and its history
+  row created *before* transcription is attempted, so a rate limit, a network
+  drop or a crash can never cost you a dictation. Failed takes stay in History
+  with a "Prepísať znova" button and a download for the raw WAV.
+- **Rate-limit resilience** — Groq 429s and server errors are retried with
+  backoff honouring `Retry-After`, and a client-side throttle keeps the live
+  preview from spending the quota the real transcription needs.
 - **History** — every dictation is saved locally (SQLite) and searchable.
-  Delete individual entries or clear it all.
+  Delete individual entries or clear it all. Audio is pruned after a
+  configurable window (default 7 days); the text is kept indefinitely, and
+  failed takes keep their audio until you delete them.
 - **Tray icon** — quick access to language switching, settings, and quit;
   optional launch-on-login.
 - **First-run wizard** — walks through permissions, the Groq key, and Meridian
@@ -71,15 +80,19 @@ window's visual styling in particular).
    this step, but dictation won't work without a key.
 3. **Meridian (optional)** — if you run [Meridian](https://github.com/rynfar/meridian)
    locally (default `http://127.0.0.1:3456`), the app will detect it and use
-   it to clean up dictated text via Claude. Skip it and raw transcripts get
-   pasted instead.
+   it to clean up dictated text via Claude. Settings has an "Otestovať" button
+   that round-trips a real completion, so you can tell "answering" apart from
+   "merely listening on the port". Skip it and raw transcripts get pasted
+   instead.
 
 All of this can be revisited later from the Settings page.
 
 ## Privacy
 
-- **Audio** is sent to Groq's API for transcription only while you're
-  recording; it isn't stored beyond that.
+- **Audio** is sent to Groq's API for transcription. A copy is also written
+  to `audio/` in the app's local data directory so a failed transcription can
+  be retried or exported; it's pruned per the retention setting (default 7
+  days for successful takes, kept until you delete them for failed ones).
 - **Transcribed text** is sent to Meridian (and from there, Anthropic) only
   if cleanup is enabled and Meridian is reachable.
 - **Everything else** — settings (including the Groq key, stored in plain
@@ -153,9 +166,10 @@ fails.
 
 The Tauri backend (`src-tauri/`) owns a hotkey listener (a raw CGEventTap on
 macOS, `rdev` elsewhere), an audio
-recorder (`cpal`), a small state machine driving the dictation phases, and
-clients for Groq (STT) and Meridian (cleanup); a paste step (`enigo`) injects
-the final text via the clipboard. The React frontend (`src/`) renders the
+recorder (`cpal`), a small state machine driving the dictation phases, a
+SQLite history store paired with an on-disk recording store, a client-side
+rate limiter, and clients for Groq (STT) and Meridian (cleanup); a paste step
+(`enigo`) injects the final text via the clipboard. The React frontend (`src/`) renders the
 floating bubble, the settings/history/wizard windows, and talks to the
 backend entirely through Tauri commands.
 
