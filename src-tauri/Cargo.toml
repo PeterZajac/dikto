@@ -1,6 +1,6 @@
 [package]
 name = "dikto"
-version = "0.1.1"
+version = "0.1.2"
 description = "Hold a hotkey, speak, and the transcribed text lands at your cursor."
 authors = ["Peter Zajac"]
 edition = "2021"

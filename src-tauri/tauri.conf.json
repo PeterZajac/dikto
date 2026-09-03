@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "Dikto",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "identifier": "com.peterzajac.dikto",
   "build": {
     "beforeDevCommand": "pnpm dev",
@@ -35,11 +35,16 @@
         "focus": false
       }
     ],
-    "security": { "csp": null }
+    "security": {
+      "csp": null
+    }
   },
   "bundle": {
     "active": true,
-    "targets": ["dmg", "nsis"],
+    "targets": [
+      "dmg",
+      "nsis"
+    ],
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
@@ -50,8 +55,15 @@
     "windows": {
       "nsis": {
         "installMode": "currentUser",
-        "languages": ["English", "Slovak"]
+        "languages": [
+          "English",
+          "Slovak"
+        ]
       }
+    },
+    "macOS": {
+      "signingIdentity": "-",
+      "hardenedRuntime": false
     }
   }
 }
