@@ -18,6 +18,8 @@ export const EVENT_HOTKEY_CAPTURED = "hotkey:captured";
 export interface StatePayload {
   phase: Phase;
   message: string | null;
+  /** Set by the backend when the failure kept the audio and a retry could fix it. */
+  retryable?: boolean;
 }
 export interface AmplitudePayload {
   value: number;

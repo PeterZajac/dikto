@@ -6,6 +6,8 @@ pub enum InjectError {
     Clipboard(String),
     #[error("keystroke: {0}")]
     Keystroke(String),
+    #[error("Accessibility permission missing")]
+    NoAccessibility,
 }
 
 pub fn copy_only(text: &str) -> Result<(), InjectError> {
@@ -50,9 +52,7 @@ fn type_text(text: &str) -> Result<(), InjectError> {
     use core_graphics::event_source::{CGEventSource, CGEventSourceStateID};
 
     if !macos_accessibility_client::accessibility::application_is_trusted() {
-        return Err(InjectError::Keystroke(
-            "chýba povolenie Prístupnosť — vkladanie nie je možné".to_string(),
-        ));
+        return Err(InjectError::NoAccessibility);
     }
 
     // CombinedSessionState, keydown-only events, 20-char chunks: this mirrors
@@ -92,9 +92,7 @@ pub(crate) fn paste_keystroke() -> Result<(), InjectError> {
     // the paste would "succeed" while nothing lands. Fail honestly so the
     // pipeline's clipboard fallback + error message kick in.
     if !macos_accessibility_client::accessibility::application_is_trusted() {
-        return Err(InjectError::Keystroke(
-            "chýba povolenie Prístupnosť — vkladanie nie je možné".to_string(),
-        ));
+        return Err(InjectError::NoAccessibility);
     }
 
     let source = CGEventSource::new(CGEventSourceStateID::HIDSystemState)

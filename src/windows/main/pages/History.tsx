@@ -3,6 +3,7 @@ import { listen } from "@tauri-apps/api/event";
 import { api } from "../../../shared/ipc";
 import type { Dictation } from "../../../shared/ipc";
 import { EVENT_HISTORY_CHANGED } from "../../../shared/events";
+import { t, useLang, useT } from "../../../shared/i18n";
 import "./history.css";
 
 const SEARCH_DEBOUNCE_MS = 250;
@@ -20,6 +21,7 @@ export default function HistoryPage() {
   const [clearArmed, setClearArmed] = useState(false);
   const [retryingIds, setRetryingIds] = useState<Set<number>>(new Set());
   const [rowNotice, setRowNotice] = useState<{ id: number; text: string } | null>(null);
+  const t = useT();
 
   const searchTermRef = useRef("");
   searchTermRef.current = searchTerm;
@@ -114,7 +116,7 @@ export default function HistoryPage() {
     markRetrying(id, true);
     api
       .historyRetry(id)
-      .catch((e) => showNotice(id, typeof e === "string" ? e : "prepis znova zlyhal"))
+      .catch((e) => showNotice(id, typeof e === "string" ? e : t("history.retryFailed")))
       .finally(() => {
         markRetrying(id, false);
         refetch();
@@ -124,8 +126,8 @@ export default function HistoryPage() {
   const handleExport = (id: number) => {
     api
       .historyExportAudio(id)
-      .then((path) => showNotice(id, `✓ uložené: ${path.split("/").pop() ?? path}`))
-      .catch((e) => showNotice(id, typeof e === "string" ? e : "uloženie zlyhalo"));
+      .then((path) => showNotice(id, t("history.exported", { file: path.split(/[\\/]/).pop() ?? path })))
+      .catch((e) => showNotice(id, typeof e === "string" ? e : t("history.exportFailed")));
   };
 
   const handleCopy = (id: number, text: string) => {
@@ -179,8 +181,8 @@ export default function HistoryPage() {
   return (
     <div className="history">
       <header className="history__header">
-        <h1 className="history__title">História</h1>
-        <p className="history__subtitle">Zoznam tvojich doterajších diktovaní.</p>
+        <h1 className="history__title">{t("history.title")}</h1>
+        <p className="history__subtitle">{t("history.subtitle")}</p>
       </header>
 
       <div className="history__toolbar">
@@ -190,14 +192,14 @@ export default function HistoryPage() {
             className="search-field__input"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            placeholder="Hľadať v histórii…"
+            placeholder={t("history.searchPlaceholder")}
             spellCheck={false}
           />
           {query && (
             <button
               type="button"
               className="search-field__clear"
-              aria-label="Vymazať hľadanie"
+              aria-label={t("history.clearSearch")}
               onClick={() => setQuery("")}
             >
               <ClearIcon />
@@ -207,9 +209,7 @@ export default function HistoryPage() {
 
         <div className="history__toolbar-right">
           {items !== null && (
-            <span className="history__count">
-              {count} {pluralizeDictation(count)}
-            </span>
+            <span className="history__count">{formatCount(count)}</span>
           )}
           <button
             type="button"
@@ -217,30 +217,30 @@ export default function HistoryPage() {
             disabled={!items || items.length === 0}
             onClick={handleClearAllClick}
           >
-            {clearArmed ? "Naozaj zmazať všetko?" : "Zmazať všetko"}
+            {clearArmed ? t("history.clearAllConfirm") : t("history.clearAll")}
           </button>
         </div>
       </div>
 
       {loadError && items === null && (
-        <div className="history__banner">Nepodarilo sa načítať históriu. Skús reštartovať appku.</div>
+        <div className="history__banner">{t("history.loadError")}</div>
       )}
 
-      {items === null && !loadError && <p className="history__loading">Načítavam históriu…</p>}
+      {items === null && !loadError && <p className="history__loading">{t("history.loading")}</p>}
 
       {items !== null && items.length === 0 && hasQuery && (
         <EmptyState
           icon={<SearchIcon size={32} />}
-          title="Nič sa nenašlo"
-          hint={`Pre „${searchTerm}“ sme nenašli žiadne diktovanie.`}
+          title={t("history.noResults.title")}
+          hint={t("history.noResults.hint", { q: searchTerm })}
         />
       )}
 
       {items !== null && items.length === 0 && !hasQuery && (
         <EmptyState
           icon={<HistoryIcon />}
-          title="Zatiaľ žiadne diktovania…"
-          hint="Podrž klávesovú skratku a začni diktovať — tvoje prepisy sa objavia tu."
+          title={t("history.empty.title")}
+          hint={t("history.empty.hint")}
         />
       )}
 
@@ -293,6 +293,7 @@ function HistoryRow({
   onRetry: (id: number) => void;
   onExport: (id: number) => void;
 }) {
+  const lang = useLang();
   const failed = item.status === "failed";
   const pending = item.status === "pending";
   const hasText = item.clean.length > 0;
@@ -309,17 +310,17 @@ function HistoryRow({
           </p>
         ) : (
           <p className="history-row__clean history-row__clean--placeholder">
-            {pending ? "Prepisujem…" : "Bez prepisu — nahrávka je uložená"}
+            {pending ? t("history.row.transcribing") : t("history.row.noTranscript")}
           </p>
         )}
 
         <div className="history-row__meta">
-          {failed && <span className="status-badge status-badge--failed">Zlyhalo</span>}
-          {pending && <span className="status-badge status-badge--pending">Prepisujem</span>}
-          <span>{formatRelative(item.ts)}</span>
+          {failed && <span className="status-badge status-badge--failed">{t("history.row.failed")}</span>}
+          {pending && <span className="status-badge status-badge--pending">{t("history.row.pending")}</span>}
+          <span>{formatRelative(item.ts, lang)}</span>
           {item.language && <span className="lang-badge">{item.language.toUpperCase()}</span>}
           <span className="history-row__duration">{formatDuration(item.duration_ms)}</span>
-          {hasAudio && <span className="history-row__audio" title="Nahrávka je uložená">♪</span>}
+          {hasAudio && <span className="history-row__audio" title={t("history.row.audioSaved")}>♪</span>}
         </div>
 
         {failed && item.error && <p className="history-row__error">{item.error}</p>}
@@ -327,7 +328,7 @@ function HistoryRow({
 
         {expanded && hasText && (
           <div className="history-row__raw">
-            <span className="history-row__raw-label">Surový prepis</span>
+            <span className="history-row__raw-label">{t("history.row.raw")}</span>
             <p className="history-row__raw-text">{item.raw}</p>
           </div>
         )}
@@ -341,26 +342,26 @@ function HistoryRow({
             disabled={retrying}
             onClick={() => onRetry(item.id)}
           >
-            {retrying ? "Prepisujem…" : "Prepísať znova"}
+            {retrying ? t("history.row.transcribing") : t("history.row.retry")}
           </button>
         )}
         {hasAudio && (
           <button type="button" className="row-action" onClick={() => onExport(item.id)}>
-            Stiahnuť audio
+            {t("history.row.export")}
           </button>
         )}
         {hasText && (
           <button type="button" className="row-action" onClick={() => onCopy(item.id, item.clean)}>
-            {copied ? "✓ Skopírované" : "Kopírovať"}
+            {copied ? t("history.row.copied") : t("history.row.copy")}
           </button>
         )}
         {hasText && (
           <button type="button" className="row-action" onClick={() => onToggleExpand(item.id)}>
-            {expanded ? "Zbaliť" : "Rozbaliť"}
+            {expanded ? t("history.row.collapse") : t("history.row.expand")}
           </button>
         )}
         <button type="button" className="row-action row-action--danger" onClick={() => onDelete(item.id)}>
-          Zmazať
+          {t("history.row.delete")}
         </button>
       </div>
     </li>
@@ -377,31 +378,31 @@ function EmptyState({ icon, title, hint }: { icon: ReactNode; title: string; hin
   );
 }
 
-function pluralizeDictation(n: number): string {
-  if (n === 1) return "diktovanie";
-  if (n >= 2 && n <= 4) return "diktovania";
-  return "diktovaní";
+function formatCount(n: number): string {
+  if (n === 1) return t("history.count.one", { n });
+  if (n >= 2 && n <= 4) return t("history.count.few", { n });
+  return t("history.count.many", { n });
 }
 
 function isSameDay(a: Date, b: Date): boolean {
   return a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
 }
 
-function formatRelative(ts: number): string {
+function formatRelative(ts: number, lang: "en" | "sk"): string {
   const now = Date.now();
   const diffMin = Math.floor((now - ts) / 60_000);
-  if (diffMin < 1) return "práve teraz";
-  if (diffMin < 60) return `pred ${diffMin} min`;
+  if (diffMin < 1) return t("time.justNow");
+  if (diffMin < 60) return t("time.minutesAgo", { n: diffMin });
 
   const date = new Date(ts);
   const today = new Date();
-  if (isSameDay(date, today)) return `pred ${Math.floor(diffMin / 60)} h`;
+  if (isSameDay(date, today)) return t("time.hoursAgo", { n: Math.floor(diffMin / 60) });
 
   const yesterday = new Date(today);
   yesterday.setDate(today.getDate() - 1);
-  if (isSameDay(date, yesterday)) return "včera";
+  if (isSameDay(date, yesterday)) return t("time.yesterday");
 
-  return date.toLocaleDateString("sk-SK", { day: "numeric", month: "numeric", year: "numeric" });
+  return date.toLocaleDateString(lang === "sk" ? "sk-SK" : "en-GB", { day: "numeric", month: "numeric", year: "numeric" });
 }
 
 function formatDuration(durationMs: number): string {

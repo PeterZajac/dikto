@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { api } from "../../../../shared/ipc";
+import { useT } from "../../../../shared/i18n";
 
 type Status = "checking" | "online" | "offline";
 
@@ -9,6 +10,7 @@ type Status = "checking" | "online" | "offline";
  */
 export default function CleanupStep({ onStatusChange }: { onStatusChange: (ready: boolean) => void }) {
   const [status, setStatus] = useState<Status>("checking");
+  const t = useT();
 
   const check = () => {
     setStatus("checking");
@@ -28,12 +30,9 @@ export default function CleanupStep({ onStatusChange }: { onStatusChange: (ready
 
   return (
     <>
-      <p className="wizard-step__eyebrow">Čistenie textu (voliteľné)</p>
-      <h1 className="wizard-step__title">Doladenie textu</h1>
-      <p className="wizard-step__desc">
-        Meridian pred vložením opraví interpunkciu a plynulosť prepisu pomocou Claude. Je to
-        voliteľné — bez neho sa vloží surový prepis z Whisperu.
-      </p>
+      <p className="wizard-step__eyebrow">{t("wizard.cleanup.eyebrow")}</p>
+      <h1 className="wizard-step__title">{t("wizard.cleanup.title")}</h1>
+      <p className="wizard-step__desc">{t("wizard.cleanup.desc")}</p>
 
       <div className="wizard-row">
         <div className="wizard-row__text">
@@ -45,21 +44,18 @@ export default function CleanupStep({ onStatusChange }: { onStatusChange: (ready
             Meridian
           </span>
           <span className="wizard-row__hint">
-            {status === "online" && "beží a je pripravený"}
-            {status === "offline" && "nie je dostupný"}
-            {status === "checking" && "zisťujem stav…"}
+            {status === "online" && t("wizard.cleanup.online")}
+            {status === "offline" && t("wizard.cleanup.offline")}
+            {status === "checking" && t("wizard.cleanup.checking")}
           </span>
         </div>
         <button type="button" className="wizard-btn" onClick={check} disabled={status === "checking"}>
-          Skúsiť znova
+          {t("wizard.cleanup.retry")}
         </button>
       </div>
 
       {status === "offline" && (
-        <p className="wizard-note">
-          Spusti Meridian v termináli príkazom <code>meridian</code> a klikni na „Skúsiť znova".
-          Alebo jednoducho pokračuj ďalej — diktovanie bude fungovať aj bez neho.
-        </p>
+        <p className="wizard-note">{t("wizard.cleanup.note")}</p>
       )}
     </>
   );

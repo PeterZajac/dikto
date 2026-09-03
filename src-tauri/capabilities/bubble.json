@@ -11,6 +11,7 @@
     "allow-cancel-dictation",
     "allow-retry-transcription",
     "core:window:allow-set-ignore-cursor-events",
-    "core:window:allow-set-size"
+    "core:window:allow-set-size",
+    "allow-get-settings"
   ]
 }

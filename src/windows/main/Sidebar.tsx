@@ -1,4 +1,5 @@
 import type { ReactElement } from "react";
+import { useT, type StringKey } from "../../shared/i18n";
 
 export type NavPage = "settings" | "history";
 
@@ -17,12 +18,13 @@ interface SidebarProps {
   warnings: FooterWarning[];
 }
 
-const NAV_ITEMS: Array<{ id: NavPage; label: string; icon: (props: { active: boolean }) => ReactElement }> = [
-  { id: "settings", label: "Nastavenia", icon: SettingsIcon },
-  { id: "history", label: "História", icon: HistoryIcon },
+const NAV_ITEMS: Array<{ id: NavPage; label: StringKey; icon: (props: { active: boolean }) => ReactElement }> = [
+  { id: "settings", label: "nav.settings", icon: SettingsIcon },
+  { id: "history", label: "nav.history", icon: HistoryIcon },
 ];
 
 export default function Sidebar({ page, onNavigate, version, warnings }: SidebarProps) {
+  const t = useT();
   return (
     <aside className="sidebar">
       <div className="sidebar__brand">
@@ -42,7 +44,7 @@ export default function Sidebar({ page, onNavigate, version, warnings }: Sidebar
               onClick={() => onNavigate(id)}
             >
               <Icon active={active} />
-              {label}
+              {t(label)}
             </button>
           );
         })}

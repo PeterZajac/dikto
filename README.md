@@ -37,7 +37,7 @@ React, and Rust.
 - **First-run wizard** — walks through permissions, the Groq key, and Meridian
   on first launch.
 
-The UI is in Slovak.
+The UI is in English by default; Slovak can be picked in Settings → Interface language.
 
 ## Install a release
 

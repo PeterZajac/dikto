@@ -3,6 +3,6 @@
 <plist version="1.0">
 <dict>
   <key>NSMicrophoneUsageDescription</key>
-  <string>Dikto potrebuje mikrofón na diktovanie.</string>
+  <string>Dikto needs the microphone to take dictation.</string>
 </dict>
 </plist>

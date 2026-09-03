@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { api } from "../../../../shared/ipc";
+import { t, useT } from "../../../../shared/i18n";
 
 const SAVED_FLASH_MS = 2500;
 
@@ -12,6 +13,7 @@ export default function GroqKeyStep({ onHasKeyChange }: { onHasKeyChange: (v: bo
   const [saved, setSaved] = useState(false);
   const [test, setTest] = useState<TestState>("idle");
   const savedTimer = useRef<number | undefined>(undefined);
+  useT();
 
   useEffect(() => {
     api
@@ -52,19 +54,16 @@ export default function GroqKeyStep({ onHasKeyChange }: { onHasKeyChange: (v: bo
 
   return (
     <>
-      <p className="wizard-step__eyebrow">Groq kľúč</p>
-      <h1 className="wizard-step__title">Priprav prepis reči</h1>
-      <p className="wizard-step__desc">
-        Prepis hlasu beží cez Groq Whisper — bezplatný tier stačí na bežné diktovanie. Vytvor si účet
-        a vlož si vygenerovaný API kľúč nižšie.
-      </p>
+      <p className="wizard-step__eyebrow">{t("wizard.groq.eyebrow")}</p>
+      <h1 className="wizard-step__title">{t("wizard.groq.title")}</h1>
+      <p className="wizard-step__desc">{t("wizard.groq.desc")}</p>
 
       <button
         type="button"
         className="wizard-btn wizard-step__link"
         onClick={() => void api.openUrl("https://console.groq.com")}
       >
-        Otvoriť console.groq.com ↗
+        {t("wizard.groq.open")}
       </button>
 
       <div className="wizard-field-row">
@@ -78,7 +77,7 @@ export default function GroqKeyStep({ onHasKeyChange }: { onHasKeyChange: (v: bo
           spellCheck={false}
         />
         <button type="button" className="wizard-btn" onClick={runTest} disabled={!hasKey || test === "testing"}>
-          Otestovať
+          {t("wizard.groq.test")}
         </button>
         <button
           type="button"
@@ -86,7 +85,7 @@ export default function GroqKeyStep({ onHasKeyChange }: { onHasKeyChange: (v: bo
           onClick={save}
           disabled={saving || !draft.trim()}
         >
-          Uložiť
+          {t("wizard.groq.save")}
         </button>
       </div>
 
@@ -102,9 +101,9 @@ export default function GroqKeyStep({ onHasKeyChange }: { onHasKeyChange: (v: bo
 }
 
 function statusNote(saved: boolean, test: TestState, hasKey: boolean): string {
-  if (saved) return "✓ kľúč uložený";
-  if (test === "testing") return "testujem spojenie…";
-  if (test === "ok") return "✓ spojenie funguje";
-  if (test === "fail") return "✗ spojenie zlyhalo";
-  return hasKey ? "✓ kľúč uložený" : "";
+  if (saved) return t("wizard.groq.saved");
+  if (test === "testing") return t("wizard.groq.testing");
+  if (test === "ok") return t("wizard.groq.testOk");
+  if (test === "fail") return t("wizard.groq.testFail");
+  return hasKey ? t("wizard.groq.saved") : "";
 }

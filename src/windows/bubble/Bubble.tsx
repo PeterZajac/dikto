@@ -12,6 +12,7 @@ import {
   Phase,
   StatePayload,
 } from "../../shared/events";
+import { useT } from "../../shared/i18n";
 import "./bubble.css";
 
 const BAR_COUNT = 24;
@@ -24,10 +25,6 @@ const SIZE_ERROR = { width: 460, height: 190 };
 const cancel = () => void invoke("cancel_dictation");
 const retry = () => void invoke("retry_transcription");
 
-/** Failures where the audio is still on disk and re-running STT could fix it. */
-const isRetryable = (message: string | null) =>
-  !!message && (message.startsWith("prepis zlyhal") || message.startsWith("chýba Groq"));
-
 export default function Bubble() {
   const [phase, setPhase] = useState<Phase>("idle");
   const [message, setMessage] = useState<string | null>(null);
@@ -36,7 +33,10 @@ export default function Bubble() {
   const [amp, setAmp] = useState(0);
   const [seconds, setSeconds] = useState(0);
   const [retrying, setRetrying] = useState(false);
+  // Set by the backend when the audio is still on disk and re-running STT could fix it.
+  const [retryable, setRetryable] = useState(false);
   const timerRef = useRef<number | null>(null);
+  const t = useT();
 
   const handleRetry = () => {
     setRetrying(true);
@@ -55,6 +55,7 @@ export default function Bubble() {
       listen<StatePayload>(EVENT_STATE, (e) => {
         setPhase(e.payload.phase);
         setMessage(e.payload.message);
+        setRetryable(e.payload.retryable === true);
         setRetrying(false);
         if (e.payload.phase === "recording") {
           setPartial("");
@@ -123,7 +124,7 @@ export default function Bubble() {
 
   if (isIdleDot) {
     return (
-      <div className="bubble-idle" aria-label="Dikto je aktívne">
+      <div className="bubble-idle" aria-label={t("bubble.idleAria")}>
         <span className="bubble-idle__dot" />
       </div>
     );
@@ -136,7 +137,7 @@ export default function Bubble() {
       style={{ "--amp": amp } as CSSProperties}
     >
       {phase === "recording" && (
-        <button className="bubble__hit" onClick={cancel} title="Zrušiť (Esc)">
+        <button className="bubble__hit" onClick={cancel} title={t("bubble.cancelTitle")}>
           <span className="bubble__rec-dot" aria-hidden />
           <Waveform bars={bars} />
           {partial ? (
@@ -148,12 +149,12 @@ export default function Bubble() {
       )}
       {/* The message carries rate-limit retry progress; fall back when idle. */}
       {phase === "transcribing" && (
-        <span className="bubble__status">{message ?? "prepisujem…"}</span>
+        <span className="bubble__status">{message ?? t("bubble.transcribing")}</span>
       )}
       {phase === "cleaning" && (
-        <span className="bubble__status">{message ?? "✨ upravujem text…"}</span>
+        <span className="bubble__status">{message ?? t("bubble.cleaning")}</span>
       )}
-      {phase === "injecting" && <span className="bubble__status">vkladám…</span>}
+      {phase === "injecting" && <span className="bubble__status">{t("bubble.injecting")}</span>}
       {phase === "idle" && message && (
         <span className="bubble__status bubble__status--done">{message}</span>
       )}
@@ -161,12 +162,12 @@ export default function Bubble() {
         <div className="bubble__error">
           <span className="bubble__status bubble__status--error">⚠ {message}</span>
           <div className="bubble__error-actions">
-            {isRetryable(message) && (
+            {retryable && (
               <button className="bubble__retry" onClick={handleRetry} disabled={retrying}>
-                skúsiť znova
+                {t("bubble.retry")}
               </button>
             )}
-            <span className="bubble__error-hint">nahrávka je uložená v histórii</span>
+            <span className="bubble__error-hint">{t("bubble.savedHint")}</span>
             <button className="bubble__retry" onClick={cancel}>
               ✕
             </button>

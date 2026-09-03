@@ -91,6 +91,16 @@ impl Interpreter {
     }
 }
 
+/// Why the global listener isn't delivering key events. The UI wording is
+/// the caller's job (it knows the UI language); this only names the cause.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ListenerDeath {
+    /// macOS only: waiting for the Accessibility grant before creating the tap.
+    MissingAccessibility,
+    /// The OS hook could not be installed.
+    Failed(String),
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HotkeySignal {
     Start,
@@ -112,7 +122,7 @@ pub fn spawn(
     hotkey: Arc<RwLock<String>>,
     tx: mpsc::Sender<HotkeySignal>,
     capture_next: Arc<AtomicBool>,
-    on_dead: Box<dyn Fn(String) + Send>,
+    on_dead: Box<dyn Fn(ListenerDeath) + Send>,
     on_captured: Box<dyn Fn(String) + Send>,
 ) -> Arc<std::sync::Mutex<Interpreter>> {
     let interp = Arc::new(std::sync::Mutex::new(Interpreter::new()));
@@ -179,12 +189,7 @@ pub fn spawn(
             let result = {
                 use macos_accessibility_client::accessibility::application_is_trusted;
                 if !application_is_trusted() {
-                    on_dead(
-                        "Globálna klávesa nefunguje — chýba povolenie Prístupnosť. \
-                         Otvor Nastavenia → Súkromie a bezpečnosť → Prístupnosť a povoľ Dikto; \
-                         appka to zachytí sama, netreba ju reštartovať."
-                            .to_string(),
-                    );
+                    on_dead(ListenerDeath::MissingAccessibility);
                     while !application_is_trusted() {
                         std::thread::sleep(std::time::Duration::from_secs(3));
                     }
@@ -211,16 +216,7 @@ pub fn spawn(
 
             if let Err(e) = result {
                 eprintln!("hotkey listener failed: {e:?}");
-                #[cfg(target_os = "macos")]
-                let message = "Globálna klávesa nefunguje — chýba povolenie Prístupnosť. \
-                               Otvor Nastavenia → Súkromie a bezpečnosť → Prístupnosť."
-                    .to_string();
-                #[cfg(not(target_os = "macos"))]
-                let message = format!(
-                    "Globálna klávesa nefunguje — sledovanie klávesnice sa nepodarilo spustiť ({e:?}). \
-                     Skús Dikto reštartovať."
-                );
-                on_dead(message);
+                on_dead(ListenerDeath::Failed(format!("{e:?}")));
             }
         });
     }

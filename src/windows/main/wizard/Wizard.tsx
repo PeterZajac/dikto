@@ -5,6 +5,7 @@ import PermissionsStep from "./steps/PermissionsStep";
 import GroqKeyStep from "./steps/GroqKeyStep";
 import CleanupStep from "./steps/CleanupStep";
 import TrialStep from "./steps/TrialStep";
+import { useT } from "../../../shared/i18n";
 import "./wizard.css";
 
 const STEP_COUNT = 5;
@@ -18,6 +19,7 @@ export default function Wizard({ onFinish }: { onFinish: () => void }) {
   const [hasGroqKey, setHasGroqKey] = useState(false);
   const [cleanupReady, setCleanupReady] = useState(true);
   const [trialSuccess, setTrialSuccess] = useState(false);
+  const t = useT();
 
   const finish = () => {
     if (finishing) return;
@@ -32,20 +34,20 @@ export default function Wizard({ onFinish }: { onFinish: () => void }) {
   const goBack = () => setStep((s) => Math.max(s - 1, 0));
 
   const primaryLabel = (): string => {
-    if (step === TRIAL_STEP) return trialSuccess ? "Dokončiť" : "Preskočiť";
-    if (step === GROQ_STEP) return hasGroqKey ? "Ďalej" : "Preskočiť";
-    if (step === CLEANUP_STEP) return cleanupReady ? "Ďalej" : "Preskočiť";
-    return "Ďalej";
+    if (step === TRIAL_STEP) return trialSuccess ? t("wizard.finish") : t("wizard.skip");
+    if (step === GROQ_STEP) return hasGroqKey ? t("wizard.next") : t("wizard.skip");
+    if (step === CLEANUP_STEP) return cleanupReady ? t("wizard.next") : t("wizard.skip");
+    return t("wizard.next");
   };
 
   return (
     <div className="wizard-overlay">
       <div className="wizard">
         <button type="button" className="wizard__skip-corner" onClick={finish} disabled={finishing}>
-          Preskočiť sprievodcu
+          {t("wizard.skipAll")}
         </button>
 
-        <div className="wizard__dots" role="tablist" aria-label="Priebeh sprievodcu">
+        <div className="wizard__dots" role="tablist" aria-label={t("wizard.progress")}>
           {Array.from({ length: STEP_COUNT }).map((_, i) => (
             <span key={i} className={`wizard__dot${i === step ? " is-active" : i < step ? " is-done" : ""}`} />
           ))}
@@ -63,7 +65,7 @@ export default function Wizard({ onFinish }: { onFinish: () => void }) {
           <div className="wizard__nav">
             {step > 0 ? (
               <button type="button" className="wizard-btn wizard-btn--ghost" onClick={goBack} disabled={finishing}>
-                Späť
+                {t("wizard.back")}
               </button>
             ) : (
               <span className="wizard__nav-spacer" />

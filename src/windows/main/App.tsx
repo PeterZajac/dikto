@@ -8,6 +8,7 @@ import Wizard from "./wizard/Wizard";
 import { api } from "../../shared/ipc";
 import type { Settings } from "../../shared/ipc";
 import { EVENT_PIPELINE_DEAD, EVENT_SETTINGS_CHANGED, type PipelineDeadPayload } from "../../shared/events";
+import { useT } from "../../shared/i18n";
 import "./app.css";
 
 export default function App() {
@@ -16,6 +17,7 @@ export default function App() {
   const [accessibilityOk, setAccessibilityOk] = useState(true);
   const [pipelineDeadMessage, setPipelineDeadMessage] = useState<string | null>(null);
   const [settings, setSettings] = useState<Settings | null>(null);
+  const t = useT();
 
   useEffect(() => {
     let cancelled = false;
@@ -83,17 +85,16 @@ export default function App() {
   if (!accessibilityOk) {
     warnings.push({
       id: "accessibility",
-      label: "Prístupnosť",
-      detail:
-        "Aplikácia nemá povolenie Asistenčný prístup — vkladanie nadiktovaného textu preto nebude fungovať.",
-      actionLabel: "Otvoriť nastavenia systému",
+      label: t("warn.accessibility.label"),
+      detail: t("warn.accessibility.detail"),
+      actionLabel: t("warn.accessibility.action"),
       onAction: () => void api.openPrivacySettings("accessibility"),
     });
   }
   if (pipelineDeadMessage) {
     warnings.push({
       id: "pipeline-dead",
-      label: "Diktovanie nedostupné",
+      label: t("warn.pipelineDead.label"),
       detail: pipelineDeadMessage,
     });
   }

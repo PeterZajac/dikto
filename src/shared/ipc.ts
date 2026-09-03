@@ -6,6 +6,7 @@ import { invoke } from "@tauri-apps/api/core";
 
 export type LanguageMode = "auto" | "sk" | "cs" | "en";
 export type CleanupStyle = "light" | "strong";
+export type UiLanguage = "en" | "sk";
 
 export interface Settings {
   hotkey: string;
@@ -21,6 +22,8 @@ export interface Settings {
   groq_api_key: string;
   /** Days a finished dictation stays in history (text + audio). 0 = keep forever. */
   history_retention_days: number;
+  /** Language of the app UI (bubble, settings, tray). Independent of `language`. */
+  ui_language: UiLanguage;
 }
 
 /** "pending" = recorded, not transcribed yet. "failed" = audio kept, retryable. */

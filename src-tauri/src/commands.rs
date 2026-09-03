@@ -16,13 +16,15 @@ pub fn cancel_dictation(ctx: State<'_, Arc<AppCtx>>) {
 pub async fn retry_transcription(ctx: State<'_, Arc<AppCtx>>) -> Result<(), String> {
     // begin() only bumps gen and writes the phase if the transition is legal,
     // so a second fast click (still Transcribing) is a no-op, not a clobber.
+    let ui = ctx.settings.read().unwrap().ui_language;
     let Some(gen) = pipeline::begin(&ctx, Event::RetryRequested, true, None) else {
-        return Err("retry nie je možný teraz".into());
+        return Err(ui.pick("retry is not possible right now", "retry nie je možný teraz").into());
     };
     let take = ctx.pending_take.lock().unwrap().clone();
     let Some(wav) = take.as_ref().and_then(|t| load_take_audio(&ctx, t)) else {
-        pipeline::advance(&ctx, gen, Event::Failed, Some("žiadne audio na zopakovanie"));
-        return Err("žiadne audio na zopakovanie".into());
+        let message = ui.pick("no audio to retry", "žiadne audio na zopakovanie");
+        pipeline::advance(&ctx, gen, Event::Failed, Some(message));
+        return Err(message.into());
     };
     // No deadline: the user just asked for this, so paste wherever they are.
     pipeline::transcribe_and_deliver(ctx.inner().clone(), wav, gen, take, None).await;
@@ -55,6 +57,7 @@ pub(crate) fn apply_settings(ctx: &AppCtx, new: Settings) -> Result<(), String> 
     // state untouched instead of drifting ahead of what's on disk.
     settings::save(&ctx.settings_path, &new).map_err(|e| e.to_string())?;
     *ctx.hotkey_name.write().unwrap() = new.hotkey.clone();
+    *ctx.ui_lang.write().unwrap() = new.ui_language;
     *ctx.settings.write().unwrap() = new.clone();
     let _ = ctx.app.emit("settings:changed", &new);
     // Keep the tray's language checkmarks in sync regardless of which path
@@ -68,6 +71,15 @@ pub(crate) fn apply_settings(ctx: &AppCtx, new: Settings) -> Result<(), String> 
         for (mode, item) in items {
             let _ = item.set_checked(mode == new.language);
         }
+    }
+    let labels = ctx.tray_labels.lock().unwrap().clone();
+    if let Some(labels) = labels {
+        let ui = new.ui_language;
+        let _ = labels.open.set_text(ui.pick(pipeline::TRAY_OPEN.0, pipeline::TRAY_OPEN.1));
+        let _ = labels.quit.set_text(ui.pick(pipeline::TRAY_QUIT.0, pipeline::TRAY_QUIT.1));
+        let _ = labels
+            .language
+            .set_text(ui.pick(pipeline::TRAY_LANGUAGE.0, pipeline::TRAY_LANGUAGE.1));
     }
     Ok(())
 }
@@ -95,7 +107,10 @@ pub fn has_groq_key(ctx: State<'_, Arc<AppCtx>>) -> bool {
 pub async fn test_groq_key(ctx: State<'_, Arc<AppCtx>>) -> Result<bool, String> {
     let (url, key) = {
         let s = ctx.settings.read().unwrap();
-        (s.groq_url.clone(), settings::groq_api_key(&s).ok_or("chýba kľúč")?)
+        (
+            s.groq_url.clone(),
+            settings::groq_api_key(&s).ok_or(s.ui_language.pick("key missing", "chýba kľúč"))?,
+        )
     };
     let resp = reqwest::Client::new()
         .get(format!("{}/openai/v1/models", url.trim_end_matches('/')))
@@ -168,19 +183,26 @@ pub fn history_clear(ctx: State<'_, Arc<AppCtx>>) {
 /// row, not a live take, so it works while idle and never pastes anywhere.
 #[tauri::command]
 pub async fn history_retry(ctx: State<'_, Arc<AppCtx>>, id: i64) -> Result<(), String> {
+    let ui = ctx.settings.read().unwrap().ui_language;
     let row = ctx
         .history
         .get(id)
         .map_err(|e| e.to_string())?
-        .ok_or("záznam neexistuje")?;
-    let audio = row.audio_path.ok_or("k tomuto záznamu nemáme audio")?;
-    let wav = ctx.recordings.read(&audio).map_err(|_| "audio sa nedá načítať")?;
+        .ok_or(ui.pick("entry does not exist", "záznam neexistuje"))?;
+    let audio = row
+        .audio_path
+        .ok_or(ui.pick("no audio kept for this entry", "k tomuto záznamu nemáme audio"))?;
+    let wav = ctx
+        .recordings
+        .read(&audio)
+        .map_err(|_| ui.pick("audio could not be read", "audio sa nedá načítať"))?;
 
     let (url, lang) = {
         let s = ctx.settings.read().unwrap();
         (s.groq_url.clone(), s.language.code())
     };
-    let key = settings::groq_api_key(&ctx.settings.read().unwrap()).ok_or("chýba Groq API kľúč")?;
+    let key = settings::groq_api_key(&ctx.settings.read().unwrap())
+        .ok_or(ui.pick("Groq API key missing", "chýba Groq API kľúč"))?;
 
     ctx.limiter.try_acquire(crate::ratelimit::Priority::Final);
     let result = crate::stt::SttClient::new(url, key)
@@ -195,13 +217,13 @@ pub async fn history_retry(ctx: State<'_, Arc<AppCtx>>, id: i64) -> Result<(), S
         }
         Ok(_) => ctx
             .history
-            .mark_failed(id, "prázdny prepis — ticho?")
+            .mark_failed(id, ui.pick("empty transcript — silence?", "prázdny prepis — ticho?"))
             .map_err(|e| e.to_string()),
         Err(e) => {
             if e.is_rate_limit() {
                 ctx.limiter.note_rate_limited(e.retry_after());
             }
-            let message = format!("prepis zlyhal: {e}");
+            let message = format!("{}: {e}", ui.pick("transcription failed", "prepis zlyhal"));
             let _ = ctx.history.mark_failed(id, &message);
             Err(message)
         }
@@ -240,11 +262,13 @@ pub fn history_audio_path(ctx: State<'_, Arc<AppCtx>>, id: i64) -> Option<String
 /// still be rescued out of the app.
 #[tauri::command]
 pub fn history_export_audio(ctx: State<'_, Arc<AppCtx>>, id: i64) -> Result<String, String> {
-    let src = audio_path_of(&ctx, id).ok_or("k tomuto záznamu nemáme audio")?;
+    let ui = ctx.settings.read().unwrap().ui_language;
+    let src = audio_path_of(&ctx, id)
+        .ok_or(ui.pick("no audio kept for this entry", "k tomuto záznamu nemáme audio"))?;
     let ts = ctx.history.get(id).ok().flatten().map(|d| d.ts).unwrap_or_default();
     let dir = dirs::download_dir()
         .or_else(dirs::home_dir)
-        .ok_or("neviem nájsť priečinok Stiahnuté")?;
+        .ok_or(ui.pick("could not find the Downloads folder", "neviem nájsť priečinok Stiahnuté"))?;
     let dest = free_path(&dir, &format!("dikto-{ts}"));
     std::fs::copy(&src, &dest).map_err(|e| e.to_string())?;
     Ok(dest.to_string_lossy().into_owned())

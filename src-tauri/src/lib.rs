@@ -15,7 +15,7 @@ mod state;
 mod stt;
 
 use pipeline::AppCtx;
-use settings::LanguageMode;
+use settings::{LanguageMode, UiLanguage};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{mpsc, Arc, Mutex, RwLock};
 use tauri::menu::{CheckMenuItem, CheckMenuItemBuilder, MenuBuilder, MenuItemBuilder, SubmenuBuilder};
@@ -92,18 +92,21 @@ pub fn run() {
             std::fs::create_dir_all(&data_dir).expect("create app data dir");
             let history = history::HistoryStore::open_or_recover(&data_dir.join("history.sqlite"));
             let recordings = recordings::RecordingStore::new(data_dir.join("audio"));
-            startup_maintenance(&history, &recordings, s.history_retention_days);
+            startup_maintenance(&history, &recordings, s.history_retention_days, s.ui_language);
 
             let capture_next = Arc::new(AtomicBool::new(false));
 
             let (tx, rx) = mpsc::channel::<hotkey::HotkeySignal>();
+            let ui_lang = Arc::new(RwLock::new(s.ui_language));
             let dead_app = app.handle().clone();
             let captured_app = app.handle().clone();
+            let ui_lang_for_dead = ui_lang.clone();
             let hotkey_interp = hotkey::spawn(
                 hotkey_name.clone(),
                 tx,
                 capture_next.clone(),
-                Box::new(move |message: String| {
+                Box::new(move |death: hotkey::ListenerDeath| {
+                    let message = listener_death_message(*ui_lang_for_dead.read().unwrap(), &death);
                     let _ = dead_app.emit("dictation:pipeline-dead", serde_json::json!({ "message": message }));
                     if let Some(win) = dead_app.get_webview_window("main") {
                         let _ = win.show();
@@ -130,6 +133,8 @@ pub fn run() {
                 limiter: ratelimit::Limiter::default(),
                 capture_next: capture_next.clone(),
                 tray_lang_items: Mutex::new(None),
+                tray_labels: Mutex::new(None),
+                ui_lang,
                 hotkey_interp,
             });
             app.manage(ctx.clone());
@@ -221,8 +226,13 @@ fn startup_maintenance(
     history: &history::HistoryStore,
     recordings: &recordings::RecordingStore,
     retention_days: u32,
+    ui: UiLanguage,
 ) {
-    match history.fail_stale_pending("prepis neprebehol — aplikácia sa ukončila") {
+    let stale_error = ui.pick(
+        "transcription did not run — the app was closed",
+        "prepis neprebehol — aplikácia sa ukončila",
+    );
+    match history.fail_stale_pending(stale_error) {
         Ok(n) if n > 0 => eprintln!("recovered {n} unfinished dictation(s) from the last run"),
         Ok(_) => {}
         Err(e) => eprintln!("could not recover unfinished dictations: {e}"),
@@ -278,6 +288,41 @@ fn spawn_retention_ticker(ctx: Arc<AppCtx>) {
     });
 }
 
+/// Wording for the "hotkey is dead" banner, in the current UI language.
+fn listener_death_message(ui: UiLanguage, death: &hotkey::ListenerDeath) -> String {
+    match death {
+        hotkey::ListenerDeath::MissingAccessibility => ui
+            .pick(
+                "Hotkey not working — Accessibility permission missing. Open System Settings → \
+                 Privacy & Security → Accessibility and enable Dikto; the app picks it up on its own, \
+                 no restart needed.",
+                "Globálna klávesa nefunguje — chýba povolenie Prístupnosť. Otvor Nastavenia → Súkromie \
+                 a bezpečnosť → Prístupnosť a povoľ Dikto; appka to zachytí sama, netreba ju reštartovať.",
+            )
+            .to_string(),
+        hotkey::ListenerDeath::Failed(detail) => {
+            if cfg!(target_os = "macos") {
+                ui.pick(
+                    "Hotkey not working — Accessibility permission missing. Open System Settings → \
+                     Privacy & Security → Accessibility.",
+                    "Globálna klávesa nefunguje — chýba povolenie Prístupnosť. Otvor Nastavenia → \
+                     Súkromie a bezpečnosť → Prístupnosť.",
+                )
+                .to_string()
+            } else {
+                format!(
+                    "{} ({detail}). {}",
+                    ui.pick(
+                        "Hotkey not working — the keyboard listener failed to start",
+                        "Globálna klávesa nefunguje — sledovanie klávesnice sa nepodarilo spustiť"
+                    ),
+                    ui.pick("Try restarting Dikto.", "Skús Dikto reštartovať.")
+                )
+            }
+        }
+    }
+}
+
 /// Positions the bubble at `saved` if it's still on-screen (some monitor
 /// intersects where the bubble would land), otherwise falls back to the
 /// default bottom-center placement.
@@ -317,7 +362,10 @@ fn fits_on_a_monitor(win: &tauri::WebviewWindow, pos: (i32, i32)) -> bool {
 /// and a quit item. The returned `TrayIcon` is kept alive internally by
 /// Tauri's resource table, so it doesn't need to be stored by the caller.
 fn build_tray(app: &tauri::AppHandle, ctx: &Arc<AppCtx>) -> tauri::Result<()> {
-    let current_lang = ctx.settings.read().unwrap().language;
+    let (current_lang, ui) = {
+        let s = ctx.settings.read().unwrap();
+        (s.language, s.ui_language)
+    };
 
     let lang_auto = CheckMenuItemBuilder::with_id("lang_auto", "Auto")
         .checked(current_lang == LanguageMode::Auto)
@@ -332,12 +380,19 @@ fn build_tray(app: &tauri::AppHandle, ctx: &Arc<AppCtx>) -> tauri::Result<()> {
         .checked(current_lang == LanguageMode::En)
         .build(app)?;
 
-    let lang_menu = SubmenuBuilder::new(app, "Jazyk")
+    let lang_menu = SubmenuBuilder::new(app, ui.pick(pipeline::TRAY_LANGUAGE.0, pipeline::TRAY_LANGUAGE.1))
         .items(&[&lang_auto, &lang_sk, &lang_cs, &lang_en])
         .build()?;
 
-    let open_item = MenuItemBuilder::with_id("tray_open", "Otvoriť Dikto").build(app)?;
-    let quit_item = MenuItemBuilder::with_id("tray_quit", "Ukončiť").build(app)?;
+    let open_item =
+        MenuItemBuilder::with_id("tray_open", ui.pick(pipeline::TRAY_OPEN.0, pipeline::TRAY_OPEN.1)).build(app)?;
+    let quit_item =
+        MenuItemBuilder::with_id("tray_quit", ui.pick(pipeline::TRAY_QUIT.0, pipeline::TRAY_QUIT.1)).build(app)?;
+    *ctx.tray_labels.lock().unwrap() = Some(pipeline::TrayLabels {
+        open: open_item.clone(),
+        quit: quit_item.clone(),
+        language: lang_menu.clone(),
+    });
 
     let menu = MenuBuilder::new(app)
         .item(&open_item)
@@ -432,7 +487,7 @@ mod maintenance_tests {
         let name = f.recordings.save(b"RIFF-interrupted", 1).unwrap();
         let id = f.history.insert_pending(Some(&name), 5000).unwrap();
 
-        startup_maintenance(&f.history, &f.recordings, 7);
+        startup_maintenance(&f.history, &f.recordings, 7, UiLanguage::En);
 
         let row = f.history.get(id).unwrap().unwrap();
         assert_eq!(row.status, STATUS_FAILED);
@@ -453,7 +508,7 @@ mod maintenance_tests {
         f.history.mark_done(fresh_id, "n", "N.", None).unwrap();
         backdate(&f.history, fresh_id, 6);
 
-        startup_maintenance(&f.history, &f.recordings, 7);
+        startup_maintenance(&f.history, &f.recordings, 7, UiLanguage::En);
 
         assert!(f.history.get(id).unwrap().is_none(), "row past retention must go");
         assert!(f.recordings.read(&name).is_err(), "the WAV should be gone");
@@ -482,7 +537,7 @@ mod maintenance_tests {
         f.history.mark_done(id, "a", "A.", None).unwrap();
         backdate(&f.history, id, 3650);
 
-        startup_maintenance(&f.history, &f.recordings, 0);
+        startup_maintenance(&f.history, &f.recordings, 0, UiLanguage::En);
 
         assert_eq!(f.history.get(id).unwrap().unwrap().audio_path.as_deref(), Some(name.as_str()));
         assert_eq!(f.recordings.read(&name).unwrap(), b"ancient");
@@ -496,7 +551,7 @@ mod maintenance_tests {
         f.history.mark_failed(id, "groq api 429").unwrap();
         backdate(&f.history, id, 3650);
 
-        startup_maintenance(&f.history, &f.recordings, 7);
+        startup_maintenance(&f.history, &f.recordings, 7, UiLanguage::En);
 
         let row = f.history.get(id).unwrap().expect("failed rows are never pruned");
         assert_eq!(row.audio_path.as_deref(), Some(name.as_str()));
@@ -511,7 +566,7 @@ mod maintenance_tests {
         let id = f.history.insert_pending(Some(&kept), 5000).unwrap();
         f.history.mark_done(id, "a", "A.", None).unwrap();
 
-        startup_maintenance(&f.history, &f.recordings, 7);
+        startup_maintenance(&f.history, &f.recordings, 7, UiLanguage::En);
 
         assert!(f.recordings.read(&orphan).is_err());
         assert_eq!(f.recordings.read(&kept).unwrap(), b"kept");
@@ -520,7 +575,7 @@ mod maintenance_tests {
     #[test]
     fn maintenance_on_an_empty_store_is_a_no_op() {
         let f = fixture();
-        startup_maintenance(&f.history, &f.recordings, 7);
+        startup_maintenance(&f.history, &f.recordings, 7, UiLanguage::En);
         assert!(f.history.list(None, 10).unwrap().is_empty());
     }
 }

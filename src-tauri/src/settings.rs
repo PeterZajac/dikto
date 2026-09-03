@@ -31,6 +31,25 @@ pub enum CleanupStyle {
     Strong,
 }
 
+/// Language of the app's own UI (bubble, settings, tray). Independent of
+/// `LanguageMode`, which is the language being dictated.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum UiLanguage {
+    #[default]
+    En,
+    Sk,
+}
+
+impl UiLanguage {
+    pub fn pick<'a>(self, en: &'a str, sk: &'a str) -> &'a str {
+        match self {
+            UiLanguage::En => en,
+            UiLanguage::Sk => sk,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Settings {
@@ -54,6 +73,7 @@ pub struct Settings {
     /// never pruned.
     #[serde(alias = "audio_retention_days")]
     pub history_retention_days: u32,
+    pub ui_language: UiLanguage,
 }
 
 pub const DEFAULT_HISTORY_RETENTION_DAYS: u32 = 7;
@@ -79,6 +99,7 @@ impl Default for Settings {
             autostart: false,
             groq_api_key: String::new(),
             history_retention_days: DEFAULT_HISTORY_RETENTION_DAYS,
+            ui_language: UiLanguage::En,
         }
     }
 }
@@ -167,6 +188,18 @@ mod tests {
     fn default_hotkey_is_a_modifier_that_does_not_type_characters() {
         let expected = if cfg!(target_os = "macos") { "AltGr" } else { "ControlRight" };
         assert_eq!(Settings::default().hotkey, expected);
+    }
+
+    #[test]
+    fn ui_language_defaults_to_english_and_loads_slovak() {
+        assert_eq!(Settings::default().ui_language, UiLanguage::En);
+        let dir = tempfile::tempdir().unwrap();
+        let p = dir.path().join("settings.json");
+        std::fs::write(&p, r#"{"language":"sk"}"#).unwrap();
+        assert_eq!(load(&p).ui_language, UiLanguage::En, "dictation language must not leak into the UI");
+        std::fs::write(&p, r#"{"ui_language":"sk"}"#).unwrap();
+        assert_eq!(load(&p).ui_language, UiLanguage::Sk);
+        assert_eq!(UiLanguage::Sk.pick("a", "b"), "b");
     }
 
     #[test]

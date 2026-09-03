@@ -3,14 +3,14 @@ use crate::cleanup::CleanupClient;
 use crate::hotkey::HotkeySignal;
 use crate::ratelimit::{Limiter, Priority};
 use crate::recordings::RecordingStore;
-use crate::settings::{self, LanguageMode, Settings};
+use crate::settings::{self, LanguageMode, Settings, UiLanguage};
 use crate::state::{transition, Event, Phase};
 use crate::stt::{RetryPolicy, SttClient};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
 use std::time::{Duration, Instant};
-use tauri::menu::CheckMenuItem;
+use tauri::menu::{CheckMenuItem, MenuItem, Submenu};
 use tauri::{AppHandle, Emitter, Manager, Wry};
 
 /// A take whose audio is already on disk and whose history row is claimed.
@@ -31,6 +31,18 @@ pub const INJECT_GRACE: Duration = Duration::from_secs(15);
 /// represents — `apply_settings` uses this to keep the tray's checkmarks in
 /// sync whenever settings change from any source (Settings page, tray itself).
 pub type TrayLangItems = Vec<(LanguageMode, CheckMenuItem<Wry>)>;
+
+/// Tray entries whose text follows the UI language.
+#[derive(Clone)]
+pub struct TrayLabels {
+    pub open: MenuItem<Wry>,
+    pub quit: MenuItem<Wry>,
+    pub language: Submenu<Wry>,
+}
+
+pub const TRAY_OPEN: (&str, &str) = ("Open Dikto", "Otvoriť Dikto");
+pub const TRAY_QUIT: (&str, &str) = ("Quit", "Ukončiť");
+pub const TRAY_LANGUAGE: (&str, &str) = ("Dictation language", "Jazyk diktovania");
 
 pub struct AppCtx {
     pub phase: Mutex<Phase>,
@@ -61,6 +73,11 @@ pub struct AppCtx {
     /// Set once by `build_tray` after the menu is built; `None` until then.
     /// `apply_settings` uses it to refresh the tray's language checkmarks.
     pub tray_lang_items: Mutex<Option<TrayLangItems>>,
+    /// Set by `build_tray`; `apply_settings` retitles them on a UI-language change.
+    pub tray_labels: Mutex<Option<TrayLabels>>,
+    /// Same Arc handed to the hotkey listener's `on_dead` callback, so its
+    /// message follows a UI-language change without restarting the thread.
+    pub ui_lang: Arc<RwLock<UiLanguage>>,
     /// The hotkey listener's tap/lock interpreter. The pipeline resets it
     /// whenever it moves to Idle for a reason the interpreter didn't decide
     /// (Esc cancel, 300s auto-stop) so the physical key state it tracks can't
@@ -86,6 +103,12 @@ fn apply_for(ctx: &AppCtx, gen: u64, ev: Event) -> Option<Phase> {
 /// phase, then emit. Returns false when the event was dropped (stale take
 /// or illegal transition).
 pub(crate) fn advance(ctx: &AppCtx, gen: u64, ev: Event, message: Option<&str>) -> bool {
+    advance_with(ctx, gen, ev, message, false)
+}
+
+/// `retryable` tells the bubble the audio is still on disk and re-running
+/// STT could fix it, so it can offer a retry button.
+pub(crate) fn advance_with(ctx: &AppCtx, gen: u64, ev: Event, message: Option<&str>, retryable: bool) -> bool {
     let next = {
         let mut guard = ctx.phase.lock().unwrap();
         if ctx.take_gen.load(Ordering::SeqCst) != gen {
@@ -97,7 +120,7 @@ pub(crate) fn advance(ctx: &AppCtx, gen: u64, ev: Event, message: Option<&str>) 
     };
     let _ = ctx.app.emit(
         "dictation:state",
-        serde_json::json!({ "phase": next, "message": message }),
+        serde_json::json!({ "phase": next, "message": message, "retryable": retryable }),
     );
     true
 }
@@ -232,7 +255,8 @@ fn start_recording(ctx: &Arc<AppCtx>) {
             spawn_partial_loop(ctx.clone(), gen);
         }
         Err(e) => {
-            advance(ctx, gen, Event::Failed, Some(&format!("mikrofón: {e}")));
+            let ui = ctx.settings.read().unwrap().ui_language;
+            advance(ctx, gen, Event::Failed, Some(&format!("{}: {e}", ui.pick("microphone", "mikrofón"))));
             show_bubble(ctx);
         }
     }
@@ -260,7 +284,8 @@ async fn finish(ctx: Arc<AppCtx>, gen: u64) {
     };
     // < 0.4 s of audio → treat as silence.
     if samples.len() < (rate as usize * ch as usize) * 2 / 5 {
-        advance(&ctx, gen, Event::Cancel, Some("nič som nepočul"));
+        let ui = ctx.settings.read().unwrap().ui_language;
+        advance(&ctx, gen, Event::Cancel, Some(ui.pick("I didn't hear anything", "nič som nepočul")));
         return;
     }
     let stopped_at = Instant::now();
@@ -287,21 +312,22 @@ pub async fn transcribe_and_deliver(
     take: Option<TakeRecord>,
     inject_deadline: Option<Instant>,
 ) {
-    let (groq_url, lang, cleanup_enabled) = {
+    let (groq_url, lang, cleanup_enabled, ui) = {
         let s = ctx.settings.read().unwrap();
-        (s.groq_url.clone(), s.language.code(), s.cleanup_enabled)
+        (s.groq_url.clone(), s.language.code(), s.cleanup_enabled, s.ui_language)
     };
+    // Failures here keep the audio, so the bubble may offer a retry.
     let fail = |message: String| {
         if let Some(t) = &take {
             let _ = ctx.history.mark_failed(t.row_id, &message);
             emit_history_changed(&ctx);
             store_pending_if_current(&ctx, gen, t.clone());
         }
-        advance(&ctx, gen, Event::Failed, Some(&message));
+        advance_with(&ctx, gen, Event::Failed, Some(&message), true);
     };
 
     let Some(api_key) = settings::groq_api_key(&ctx.settings.read().unwrap()) else {
-        fail("chýba Groq API kľúč".into());
+        fail(ui.pick("Groq API key missing", "chýba Groq API kľúč").into());
         return;
     };
 
@@ -315,7 +341,8 @@ pub async fn transcribe_and_deliver(
                 &ctx_for_retry,
                 gen,
                 &format!(
-                    "limit Groq — skúšam znova o {} s ({attempt}/4)",
+                    "{} {} s ({attempt}/4)",
+                    ui.pick("Groq rate limit — retrying in", "limit Groq — skúšam znova o"),
                     delay.as_secs().max(1)
                 ),
             );
@@ -327,16 +354,18 @@ pub async fn transcribe_and_deliver(
             if e.is_rate_limit() {
                 ctx.limiter.note_rate_limited(e.retry_after());
             }
-            fail(format!("prepis zlyhal: {e}"));
+            fail(format!("{}: {e}", ui.pick("transcription failed", "prepis zlyhal")));
             return;
         }
     };
     if transcript.text.is_empty() {
         if let Some(t) = &take {
-            let _ = ctx.history.mark_failed(t.row_id, "prázdny prepis — ticho?");
+            let _ = ctx
+                .history
+                .mark_failed(t.row_id, ui.pick("empty transcript — silence?", "prázdny prepis — ticho?"));
             emit_history_changed(&ctx);
         }
-        advance(&ctx, gen, Event::Cancel, Some("nič som nepočul"));
+        advance(&ctx, gen, Event::Cancel, Some(ui.pick("I didn't hear anything", "nič som nepočul")));
         return;
     }
 
@@ -346,14 +375,19 @@ pub async fn transcribe_and_deliver(
         cleanup_enabled.then(|| CleanupClient::for_settings(&ctx.settings.read().unwrap()));
     let final_text = match cleanup_client {
         Some(client) => {
-            if !advance(&ctx, gen, Event::TranscriptReady, Some("✨ upravujem text…")) {
+            if !advance(
+                &ctx,
+                gen,
+                Event::TranscriptReady,
+                Some(ui.pick("✨ cleaning up text…", "✨ upravujem text…")),
+            ) {
                 commit(&ctx, &take, &transcript, &transcript.text);
                 return; // cancelled meanwhile, or a stale take
             }
             match client.clean(&transcript.text).await {
                 Ok(cleaned) => cleaned,
                 Err(_) => {
-                    note = Some("vložené bez úprav");
+                    note = Some(ui.pick("pasted without cleanup", "vložené bez úprav"));
                     transcript.text.clone()
                 }
             }
@@ -383,7 +417,10 @@ pub async fn transcribe_and_deliver(
             &ctx,
             gen,
             Event::Failed,
-            Some("hotové neskoro — text je v schránke a v histórii"),
+            Some(ui.pick(
+                "finished late — text is in the clipboard and in History",
+                "hotové neskoro — text je v schránke a v histórii",
+            )),
         );
         return;
     }
@@ -398,19 +435,29 @@ pub async fn transcribe_and_deliver(
                 &ctx,
                 gen,
                 Event::Injected,
-                Some(note.unwrap_or("✓ vložené — text je aj v schránke")),
+                Some(note.unwrap_or(ui.pick("✓ pasted — text is in the clipboard too", "✓ vložené — text je aj v schránke"))),
             );
         }
         Err(e) => {
             // Never lose text: leave it in the clipboard at minimum,
             // regardless of whether this take is still the active one.
             let _ = crate::inject::copy_only(&final_text);
-            advance(
-                &ctx,
-                gen,
-                Event::Failed,
-                Some(&format!("vloženie zlyhalo — text je v schránke (Cmd/Ctrl+V). {e}")),
-            );
+            let message = match e {
+                crate::inject::InjectError::NoAccessibility => ui
+                    .pick(
+                        "paste failed — Accessibility permission missing. Text is in the clipboard (Cmd+V).",
+                        "vloženie zlyhalo — chýba povolenie Prístupnosť. Text je v schránke (Cmd+V).",
+                    )
+                    .to_string(),
+                e => format!(
+                    "{} {e}",
+                    ui.pick(
+                        "paste failed — text is in the clipboard (Cmd/Ctrl+V).",
+                        "vloženie zlyhalo — text je v schránke (Cmd/Ctrl+V)."
+                    )
+                ),
+            };
+            advance(&ctx, gen, Event::Failed, Some(&message));
         }
     }
 }

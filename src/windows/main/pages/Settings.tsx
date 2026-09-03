@@ -6,7 +6,9 @@ import {
   isEnabled as autostartIsEnabled,
 } from "@tauri-apps/plugin-autostart";
 import { api } from "../../../shared/ipc";
-import type { CleanupStyle, LanguageMode, Settings } from "../../../shared/ipc";
+import type { CleanupStyle, LanguageMode, Settings, UiLanguage } from "../../../shared/ipc";
+import { t, useT, type StringKey } from "../../../shared/i18n";
+import { isMac } from "../../../shared/platform";
 import { EVENT_HOTKEY_CAPTURED, EVENT_SETTINGS_CHANGED, type HotkeyCapturedPayload } from "../../../shared/events";
 import "./settings.css";
 
@@ -40,29 +42,60 @@ for (let c = 65; c <= 90; c++) {
 }
 for (let d = 0; d <= 9; d++) CODE_TO_RDEV[`Digit${d}`] = `Num${d}`;
 
-const LANGUAGE_OPTIONS: Array<{ id: LanguageMode; label: string }> = [
-  { id: "auto", label: "Auto" },
+const UI_LANGUAGE_OPTIONS: Array<{ id: UiLanguage; label: string }> = [
+  { id: "en", label: "EN" },
+  { id: "sk", label: "SK" },
+];
+
+const LANGUAGE_OPTIONS: Array<{ id: LanguageMode; label: string | StringKey }> = [
+  { id: "auto", label: "settings.language.auto" },
   { id: "sk", label: "SK" },
   { id: "cs", label: "CS" },
   { id: "en", label: "EN" },
 ];
 
-const CLEANUP_STYLE_OPTIONS: Array<{ id: CleanupStyle; label: string }> = [
-  { id: "light", label: "jemné" },
-  { id: "strong", label: "silné" },
+const CLEANUP_STYLE_OPTIONS: Array<{ id: CleanupStyle; label: StringKey }> = [
+  { id: "light", label: "settings.cleanup.styleLight" },
+  { id: "strong", label: "settings.cleanup.styleStrong" },
 ];
 
-const RETENTION_OPTIONS: Array<{ id: number; label: string }> = [
-  { id: 7, label: "7 dní" },
-  { id: 30, label: "30 dní" },
-  { id: 0, label: "navždy" },
+const RETENTION_OPTIONS: Array<{ id: number; label: StringKey }> = [
+  { id: 7, label: "settings.retention.days7" },
+  { id: 30, label: "settings.retention.days30" },
+  { id: 0, label: "settings.retention.forever" },
 ];
+
+/** Maps rdev key names to a readable, platform-aware label; other keys keep their name. */
+const KEY_LABELS: Record<string, StringKey> = isMac
+  ? {
+      AltGr: "key.rightOption",
+      Alt: "key.leftOption",
+      ControlRight: "key.rightCtrl",
+      ControlLeft: "key.leftCtrl",
+      MetaRight: "key.rightCmd",
+      MetaLeft: "key.leftCmd",
+      ShiftRight: "key.rightShift",
+      ShiftLeft: "key.leftShift",
+      Space: "key.space",
+    }
+  : {
+      AltGr: "key.rightAlt",
+      Alt: "key.leftAlt",
+      ControlRight: "key.rightCtrl",
+      ControlLeft: "key.leftCtrl",
+      MetaRight: "key.rightWin",
+      MetaLeft: "key.leftWin",
+      ShiftRight: "key.rightShift",
+      ShiftLeft: "key.leftShift",
+      Space: "key.space",
+    };
 
 export default function SettingsPage() {
   const [settings, setSettings] = useState<Settings | null>(null);
   const [loaded, setLoaded] = useState(false);
   const [loadError, setLoadError] = useState(false);
   const [saveError, setSaveError] = useState(false);
+  useT();
 
   const settingsRef = useRef<Settings | null>(null);
   settingsRef.current = settings;
@@ -203,8 +236,9 @@ export default function SettingsPage() {
     window.clearTimeout(captureStallRef.current);
   }, []);
 
-  // ---- language ----
+  // ---- languages ----
   const setLanguage = (language: LanguageMode) => commit({ language });
+  const setUiLanguage = (ui_language: UiLanguage) => commit({ ui_language });
 
   // ---- cleanup: toggle, style, model + meridian url (debounced) ----
   const toggleCleanup = () => {
@@ -221,7 +255,7 @@ export default function SettingsPage() {
   const modelTimer = useRef<number | undefined>(undefined);
   const meridianTimer = useRef<number | undefined>(undefined);
 
-  // Result of the last "Otestovať" click, or null when nothing has been tried
+  // Result of the last "Test" click, or null when nothing has been tried
   // since the Meridian URL changed.
   const [cleanupTest, setCleanupTest] = useState<{ ok: boolean; text: string } | null>(null);
   const [testingCleanup, setTestingCleanup] = useState(false);
@@ -240,8 +274,8 @@ export default function SettingsPage() {
     window.setTimeout(() => {
       api
         .testCleanup()
-        .then(() => setCleanupTest({ ok: true, text: "Funguje — model odpovedal." }))
-        .catch((e) => setCleanupTest({ ok: false, text: typeof e === "string" ? e : "Test zlyhal." }))
+        .then(() => setCleanupTest({ ok: true, text: t("settings.cleanup.testOk") }))
+        .catch((e) => setCleanupTest({ ok: false, text: typeof e === "string" ? e : t("settings.cleanup.testFail") }))
         .finally(() => setTestingCleanup(false));
     }, 50);
   };
@@ -370,14 +404,14 @@ export default function SettingsPage() {
   if (loadError) {
     return (
       <div className="settings">
-        <div className="settings__banner">Nepodarilo sa načítať nastavenia. Skús reštartovať appku.</div>
+        <div className="settings__banner">{t("settings.loadError")}</div>
       </div>
     );
   }
   if (!settings) {
     return (
       <div className="settings">
-        <p className="settings__loading">Načítavam nastavenia…</p>
+        <p className="settings__loading">{t("settings.loading")}</p>
       </div>
     );
   }
@@ -385,70 +419,29 @@ export default function SettingsPage() {
   return (
     <div className="settings">
       <header className="settings__header">
-        <h1 className="settings__title">Nastavenia</h1>
-        <p className="settings__subtitle">Klávesová skratka, jazyk, čistenie textu a Groq kľúč.</p>
+        <h1 className="settings__title">{t("settings.title")}</h1>
+        <p className="settings__subtitle">{t("settings.subtitle")}</p>
       </header>
 
-      {saveError && <div className="settings__banner">Nepodarilo sa uložiť zmenu — skús to znova.</div>}
+      {saveError && <div className="settings__banner">{t("settings.saveError")}</div>}
 
       <section className="settings-section">
         <div className="settings-section__head">
-          <h2 className="settings-section__title">Klávesa</h2>
-          <p className="settings-section__desc">
-            Podrž pre nahrávanie, dvojité ťuknutie zamkne nahrávanie zapnuté.
-          </p>
+          <h2 className="settings-section__title">{t("settings.uiLanguage.title")}</h2>
+          <p className="settings-section__desc">{t("settings.uiLanguage.desc")}</p>
         </div>
         <div className="settings-row">
-          <div className="settings-row__text">
-            <span className="settings-row__label">Klávesová skratka</span>
-            {capturing && <span className="capture-hint">stlač klávesu… (Esc = zrušiť)</span>}
-          </div>
+          <span className="settings-row__label">{t("settings.uiLanguage.label")}</span>
           <div className="settings-row__control">
-            <span className={`keycap${capturing ? " keycap--capturing" : ""}`}>
-              {capturing ? "…" : humanizeKey(settings.hotkey)}
-            </span>
-            {capturing ? (
-              <button type="button" className="btn" onClick={() => exitCapture(true)}>
-                Zrušiť
-              </button>
-            ) : (
-              <button type="button" className="btn" onClick={startCapture}>
-                Zmeniť
-              </button>
-            )}
-          </div>
-        </div>
-        {capturing && captureStalled && (
-          <div className="settings-row settings-row--tight">
-            <span className="inline-note">Klávesa nezachytená? Skontroluj povolenie Prístupnosť</span>
-            <button
-              type="button"
-              className="btn"
-              onClick={() => void api.openPrivacySettings("accessibility")}
-            >
-              Otvoriť nastavenia
-            </button>
-          </div>
-        )}
-      </section>
-
-      <section className="settings-section">
-        <div className="settings-section__head">
-          <h2 className="settings-section__title">Jazyk</h2>
-          <p className="settings-section__desc">Jazyk diktovania pre prepis reči.</p>
-        </div>
-        <div className="settings-row">
-          <span className="settings-row__label">Jazyk</span>
-          <div className="settings-row__control">
-            <div className="segmented" role="tablist" aria-label="Jazyk">
-              {LANGUAGE_OPTIONS.map((opt) => (
+            <div className="segmented" role="tablist" aria-label={t("settings.uiLanguage.label")}>
+              {UI_LANGUAGE_OPTIONS.map((opt) => (
                 <button
                   key={opt.id}
                   type="button"
                   role="tab"
-                  aria-selected={settings.language === opt.id}
-                  className={`segmented__option${settings.language === opt.id ? " is-active" : ""}`}
-                  onClick={() => setLanguage(opt.id)}
+                  aria-selected={settings.ui_language === opt.id}
+                  className={`segmented__option${settings.ui_language === opt.id ? " is-active" : ""}`}
+                  onClick={() => setUiLanguage(opt.id)}
                 >
                   {opt.label}
                 </button>
@@ -460,24 +453,86 @@ export default function SettingsPage() {
 
       <section className="settings-section">
         <div className="settings-section__head">
-          <h2 className="settings-section__title">Čistenie textu</h2>
-          <p className="settings-section__desc">
-            Claude doladí interpunkciu a plynulosť prepisu pred vložením. Voliteľné — bez neho sa
-            vloží surový prepis.
-          </p>
+          <h2 className="settings-section__title">{t("settings.hotkey.title")}</h2>
+          <p className="settings-section__desc">{t("settings.hotkey.desc")}</p>
         </div>
         <div className="settings-row">
-          <span className="settings-row__label">Zapnuté čistenie</span>
+          <div className="settings-row__text">
+            <span className="settings-row__label">{t("settings.hotkey.label")}</span>
+            {capturing && <span className="capture-hint">{t("settings.hotkey.captureHint")}</span>}
+          </div>
           <div className="settings-row__control">
-            <Toggle checked={settings.cleanup_enabled} onChange={toggleCleanup} label="Čistenie textu" />
+            <span className={`keycap${capturing ? " keycap--capturing" : ""}`}>
+              {capturing ? "…" : humanizeKey(settings.hotkey)}
+            </span>
+            {capturing ? (
+              <button type="button" className="btn" onClick={() => exitCapture(true)}>
+                {t("settings.hotkey.cancel")}
+              </button>
+            ) : (
+              <button type="button" className="btn" onClick={startCapture}>
+                {t("settings.hotkey.change")}
+              </button>
+            )}
+          </div>
+        </div>
+        {capturing && captureStalled && (
+          <div className="settings-row settings-row--tight">
+            <span className="inline-note">{t("settings.hotkey.stalled")}</span>
+            <button
+              type="button"
+              className="btn"
+              onClick={() => void api.openPrivacySettings("accessibility")}
+            >
+              {t("settings.hotkey.openSettings")}
+            </button>
+          </div>
+        )}
+      </section>
+
+      <section className="settings-section">
+        <div className="settings-section__head">
+          <h2 className="settings-section__title">{t("settings.language.title")}</h2>
+          <p className="settings-section__desc">{t("settings.language.desc")}</p>
+        </div>
+        <div className="settings-row">
+          <span className="settings-row__label">{t("settings.language.label")}</span>
+          <div className="settings-row__control">
+            <div className="segmented" role="tablist" aria-label={t("settings.language.label")}>
+              {LANGUAGE_OPTIONS.map((opt) => (
+                <button
+                  key={opt.id}
+                  type="button"
+                  role="tab"
+                  aria-selected={settings.language === opt.id}
+                  className={`segmented__option${settings.language === opt.id ? " is-active" : ""}`}
+                  onClick={() => setLanguage(opt.id)}
+                >
+                  {opt.id === "auto" ? t("settings.language.auto") : opt.label}
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section className="settings-section">
+        <div className="settings-section__head">
+          <h2 className="settings-section__title">{t("settings.cleanup.title")}</h2>
+          <p className="settings-section__desc">{t("settings.cleanup.desc")}</p>
+        </div>
+        <div className="settings-row">
+          <span className="settings-row__label">{t("settings.cleanup.enabled")}</span>
+          <div className="settings-row__control">
+            <Toggle checked={settings.cleanup_enabled} onChange={toggleCleanup} label={t("settings.cleanup.toggleAria")} />
           </div>
         </div>
 
 
         <div className="settings-row">
           <div className="settings-row__text">
-            <span className="settings-row__label">Štýl úprav</span>
-            <span className="settings-row__desc">Silné mierne preformuluje vety kvôli plynulosti.</span>
+            <span className="settings-row__label">{t("settings.cleanup.style")}</span>
+            <span className="settings-row__desc">{t("settings.cleanup.styleDesc")}</span>
           </div>
           <div className="settings-row__control">
             <RadioGroup
@@ -491,10 +546,8 @@ export default function SettingsPage() {
         </div>
 
         <div className="settings-row settings-row--column">
-          <span className="settings-row__label">Claude model</span>
-          <span className="settings-row__desc">
-            Čistenie prepísaného textu — interpunkcia, výplňové slová. Nejde cez Groq.
-          </span>
+          <span className="settings-row__label">{t("settings.cleanup.model")}</span>
+          <span className="settings-row__desc">{t("settings.cleanup.modelDesc")}</span>
           <div className="settings-row__control">
             <input
               className="field"
@@ -512,7 +565,7 @@ export default function SettingsPage() {
         </div>
 
         <div className="settings-row settings-row--column">
-          <span className="settings-row__label">Meridian URL</span>
+          <span className="settings-row__label">{t("settings.cleanup.meridianUrl")}</span>
           <div className="settings-row__control">
             <div className="field-row">
               <input
@@ -528,7 +581,7 @@ export default function SettingsPage() {
                 spellCheck={false}
               />
               <button type="button" className="btn" disabled={testingCleanup} onClick={runCleanupTest}>
-                {testingCleanup ? "Testujem…" : "Otestovať"}
+                {testingCleanup ? t("settings.cleanup.testing") : t("settings.cleanup.test")}
               </button>
             </div>
           </div>
@@ -536,9 +589,9 @@ export default function SettingsPage() {
         <div className="settings-row settings-row--tight">
           <span className="status-line">
             <StatusDot status={meridianStatus} />
-            {meridianStatus === "online" && "Meridian beží"}
-            {meridianStatus === "offline" && "Meridian nedostupný"}
-            {meridianStatus === "unknown" && "Zisťujem stav…"}
+            {meridianStatus === "online" && t("settings.cleanup.online")}
+            {meridianStatus === "offline" && t("settings.cleanup.offline")}
+            {meridianStatus === "unknown" && t("settings.cleanup.checking")}
           </span>
         </div>
         {/* The dot only proves something is listening; this proves it answers. */}
@@ -557,19 +610,13 @@ export default function SettingsPage() {
 
       <section className="settings-section">
         <div className="settings-section__head">
-          <h2 className="settings-section__title">Nahrávky</h2>
-          <p className="settings-section__desc">
-            Každé diktovanie sa uloží na disk ešte pred prepisom, takže sa nestratí ani keď Groq
-            zlyhá. Text v histórii ostáva navždy — toto riadi len to, ako dlho sa držia WAV súbory.
-          </p>
+          <h2 className="settings-section__title">{t("settings.recordings.title")}</h2>
+          <p className="settings-section__desc">{t("settings.recordings.desc")}</p>
         </div>
         <div className="settings-row">
           <div className="settings-row__text">
-            <span className="settings-row__label">Držať históriu</span>
-            <span className="settings-row__desc">
-              Staršie dokončené diktáty sa zmažú aj s nahrávkou. Zlyhané a neprepísané nahrávky
-              sa nemažú nikdy — tie zmažeš len ručne v histórii.
-            </span>
+            <span className="settings-row__label">{t("settings.retention.label")}</span>
+            <span className="settings-row__desc">{t("settings.retention.desc")}</span>
           </div>
           <div className="settings-row__control">
             <RadioGroup
@@ -584,17 +631,15 @@ export default function SettingsPage() {
 
       <section className="settings-section">
         <div className="settings-section__head">
-          <h2 className="settings-section__title">Groq API kľúč</h2>
-          <p className="settings-section__desc">
-            Prepis reči na text (Whisper cez Groq). Zadarmo na console.groq.com.
-          </p>
+          <h2 className="settings-section__title">{t("settings.groq.title")}</h2>
+          <p className="settings-section__desc">{t("settings.groq.desc")}</p>
         </div>
         <div className="settings-row settings-row--column">
-          <span className="settings-row__label">API kľúč</span>
+          <span className="settings-row__label">{t("settings.groq.label")}</span>
           {hasGroqKey && (
             <span className="status-line">
               <span className="status-dot status-dot--ok" aria-hidden />
-              Kľúč je uložený v lokálnom nastavení
+              {t("settings.groq.stored")}
             </span>
           )}
           <div className="settings-row__control">
@@ -604,7 +649,7 @@ export default function SettingsPage() {
                 className="field"
                 value={groqDraft}
                 onChange={(e) => setGroqDraft(e.target.value)}
-                placeholder={hasGroqKey ? "•••••••• (uložený — vlož nový pre zmenu)" : "gsk_…"}
+                placeholder={hasGroqKey ? t("settings.groq.placeholderStored") : "gsk_…"}
                 autoComplete="off"
                 spellCheck={false}
               />
@@ -614,7 +659,7 @@ export default function SettingsPage() {
                 onClick={saveGroqKey}
                 disabled={groqSaving || !groqDraft.trim()}
               >
-                Uložiť
+                {t("settings.groq.save")}
               </button>
               <button
                 type="button"
@@ -622,7 +667,7 @@ export default function SettingsPage() {
                 onClick={testGroqKey}
                 disabled={!hasGroqKey || groqTest === "testing"}
               >
-                Otestovať
+                {t("settings.groq.test")}
               </button>
             </div>
           </div>
@@ -636,19 +681,19 @@ export default function SettingsPage() {
 
       <section className="settings-section">
         <div className="settings-section__head">
-          <h2 className="settings-section__title">Systém</h2>
+          <h2 className="settings-section__title">{t("settings.system.title")}</h2>
         </div>
         <div className="settings-row">
           <div className="settings-row__text">
-            <span className="settings-row__label">Spustiť pri prihlásení</span>
-            {autostartError && <span className="inline-note">nepodarilo sa zmeniť — skús znova</span>}
+            <span className="settings-row__label">{t("settings.system.autostart")}</span>
+            {autostartError && <span className="inline-note">{t("settings.system.autostartError")}</span>}
           </div>
           <div className="settings-row__control">
             <Toggle
               checked={autostartOn}
               disabled={autostartBusy}
               onChange={toggleAutostart}
-              label="Spustiť pri prihlásení"
+              label={t("settings.system.autostart")}
             />
           </div>
         </div>
@@ -658,14 +703,16 @@ export default function SettingsPage() {
 }
 
 function groqTestNote(saved: boolean, test: "idle" | "testing" | "ok" | "fail"): string {
-  if (saved) return "kľúč bol uložený";
-  if (test === "testing") return "testujem spojenie…";
-  if (test === "ok") return "✓ spojenie funguje";
-  if (test === "fail") return "✗ spojenie zlyhalo";
+  if (saved) return t("settings.groq.saved");
+  if (test === "testing") return t("settings.groq.testing");
+  if (test === "ok") return t("settings.groq.testOk");
+  if (test === "fail") return t("settings.groq.testFail");
   return "";
 }
 
 function humanizeKey(key: string): string {
+  const label = KEY_LABELS[key];
+  if (label) return t(label);
   return key.replace(/([a-z0-9])([A-Z])/g, "$1 $2");
 }
 
@@ -703,7 +750,7 @@ function RadioGroup<T extends string | number>({
   name,
 }: {
   value: T;
-  options: Array<{ id: T; label: string }>;
+  options: Array<{ id: T; label: StringKey }>;
   onChange: (v: T) => void;
   disabled?: boolean;
   name: string;
@@ -719,7 +766,7 @@ function RadioGroup<T extends string | number>({
             disabled={disabled}
             onChange={() => onChange(opt.id)}
           />
-          {opt.label}
+          {t(opt.label)}
         </label>
       ))}
     </div>

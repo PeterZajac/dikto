@@ -1,11 +1,13 @@
 import { useEffect, useState } from "react";
 import { api } from "../../../../shared/ipc";
 import { isMac } from "../../../../shared/platform";
+import { useT } from "../../../../shared/i18n";
 
 const POLL_MS = 2000;
 
 export default function PermissionsStep() {
   const [accessibility, setAccessibility] = useState<boolean | null>(null);
+  const t = useT();
 
   useEffect(() => {
     let cancelled = false;
@@ -29,12 +31,10 @@ export default function PermissionsStep() {
 
   return (
     <>
-      <p className="wizard-step__eyebrow">Povolenia</p>
-      <h1 className="wizard-step__title">Over prístupové oprávnenia</h1>
+      <p className="wizard-step__eyebrow">{t("wizard.permissions.eyebrow")}</p>
+      <h1 className="wizard-step__title">{t("wizard.permissions.title")}</h1>
       <p className="wizard-step__desc">
-        {isMac
-          ? "Appka potrebuje systémové povolenia, aby vedela vkladať nadiktovaný text a nahrávať mikrofón."
-          : "Windows sa pri prvom nahrávaní opýta na prístup k mikrofónu — stačí ho povoliť."}
+        {isMac ? t("wizard.permissions.descMac") : t("wizard.permissions.descWin")}
       </p>
 
       {isMac && (
@@ -42,16 +42,18 @@ export default function PermissionsStep() {
           <div className="wizard-row__text">
             <span className="wizard-row__label">
               <StatusDot ok={accessibility} />
-              Asistenčný prístup
+              {t("wizard.permissions.accessibility")}
             </span>
-            <span className="wizard-row__hint">{accessibility ? "povolené" : "potrebné pre vkladanie textu"}</span>
+            <span className="wizard-row__hint">
+              {accessibility ? t("wizard.permissions.granted") : t("wizard.permissions.neededForPaste")}
+            </span>
           </div>
           <button
             type="button"
             className="wizard-btn"
             onClick={() => void api.openPrivacySettings("accessibility")}
           >
-            Otvoriť nastavenia
+            {t("wizard.permissions.open")}
           </button>
         </div>
       )}
@@ -60,21 +62,16 @@ export default function PermissionsStep() {
         <div className="wizard-row__text">
           <span className="wizard-row__label">
             <span className="wizard-dot" aria-hidden />
-            Mikrofón
+            {t("wizard.permissions.microphone")}
           </span>
-          <span className="wizard-row__hint">zistí sa pri prvom diktovaní</span>
+          <span className="wizard-row__hint">{t("wizard.permissions.micHint")}</span>
         </div>
         <button type="button" className="wizard-btn" onClick={() => void api.openPrivacySettings("microphone")}>
-          Otvoriť nastavenia
+          {t("wizard.permissions.open")}
         </button>
       </div>
 
-      {import.meta.env.DEV && (
-        <p className="wizard-note">
-          V dev režime (<code>pnpm tauri dev</code>) drží tieto povolenia terminál, nie táto appka —
-          skontroluj ich pre Terminal/iTerm v Nastaveniach systému.
-        </p>
-      )}
+      {import.meta.env.DEV && <p className="wizard-note">{t("wizard.permissions.devNote")}</p>}
     </>
   );
 }
