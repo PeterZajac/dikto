@@ -54,6 +54,8 @@ export const api = {
   setGroqKey: (key: string) => invoke<void>("set_groq_key", { key }),
   testGroqKey: () => invoke<boolean>("test_groq_key"),
   meridianStatus: () => invoke<boolean>("meridian_status"),
+  // Model ids from Meridian's /v1/models; [] when Meridian is unreachable.
+  meridianModels: () => invoke<string[]>("meridian_models"),
   historyList: (search?: string, limit?: number) =>
     invoke<Dictation[]>("history_list", { search: search ?? null, limit: limit ?? null }),
   historyDelete: (id: number) => invoke<void>("history_delete", { id }),

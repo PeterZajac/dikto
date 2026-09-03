@@ -134,16 +134,25 @@ export default function SettingsPage() {
 
   // Optimistic patch: applies immediately, saves, rolls back + flags an
   // inline error banner if the backend rejects it.
+  const [savedFlash, setSavedFlash] = useState(false);
+  const savedTimer = useRef<number | undefined>(undefined);
   const commit = useCallback((partial: Partial<Settings>) => {
     const prev = settingsRef.current;
     if (!prev) return;
     const next = { ...prev, ...partial };
     setSettings(next);
     setSaveError(false);
-    api.setSettings(next).catch(() => {
-      setSettings(prev);
-      setSaveError(true);
-    });
+    api
+      .setSettings(next)
+      .then(() => {
+        setSavedFlash(true);
+        window.clearTimeout(savedTimer.current);
+        savedTimer.current = window.setTimeout(() => setSavedFlash(false), 1500);
+      })
+      .catch(() => {
+        setSettings(prev);
+        setSaveError(true);
+      });
   }, []);
 
   // ---- hotkey capture ----
@@ -281,11 +290,26 @@ export default function SettingsPage() {
   };
 
   const [meridianStatus, setMeridianStatus] = useState<MeridianStatus>("unknown");
+  // Model ids Meridian offers; empty → free-text input instead of a picker.
+  const [meridianModels, setMeridianModels] = useState<string[]>([]);
   const refreshMeridian = useCallback(() => {
     api
       .meridianStatus()
-      .then((ok) => setMeridianStatus(ok ? "online" : "offline"))
-      .catch(() => setMeridianStatus("offline"));
+      .then((ok) => {
+        setMeridianStatus(ok ? "online" : "offline");
+        if (!ok) {
+          setMeridianModels([]);
+          return;
+        }
+        api
+          .meridianModels()
+          .then(setMeridianModels)
+          .catch(() => setMeridianModels([]));
+      })
+      .catch(() => {
+        setMeridianStatus("offline");
+        setMeridianModels([]);
+      });
   }, []);
 
   useEffect(() => {
@@ -421,6 +445,9 @@ export default function SettingsPage() {
       <header className="settings__header">
         <h1 className="settings__title">{t("settings.title")}</h1>
         <p className="settings__subtitle">{t("settings.subtitle")}</p>
+        <span className={`settings__saved${savedFlash ? " is-visible" : ""}`} aria-live="polite">
+          ✓ {t("settings.saved")}
+        </span>
       </header>
 
       {saveError && <div className="settings__banner">{t("settings.saveError")}</div>}
@@ -547,20 +574,40 @@ export default function SettingsPage() {
 
         <div className="settings-row settings-row--column">
           <span className="settings-row__label">{t("settings.cleanup.model")}</span>
-          <span className="settings-row__desc">{t("settings.cleanup.modelDesc")}</span>
+          <span className="settings-row__desc">
+            {t("settings.cleanup.modelDesc")}{" "}
+            {meridianModels.length > 0 ? t("settings.cleanup.modelFromMeridian") : t("settings.cleanup.modelManual")}
+          </span>
           <div className="settings-row__control">
-            <input
-              className="field"
-              value={modelDraft}
-              onFocus={() => (modelFocused.current = true)}
-              onBlur={() => {
-                modelFocused.current = false;
-                flushModel();
-              }}
-              onChange={(e) => commitModelDebounced(e.target.value)}
-              placeholder="claude-sonnet-5"
-              spellCheck={false}
-            />
+            {meridianModels.length > 0 ? (
+              <select
+                className="field"
+                value={settings.cleanup_model}
+                onChange={(e) => commit({ cleanup_model: e.target.value })}
+              >
+                {!meridianModels.includes(settings.cleanup_model) && (
+                  <option value={settings.cleanup_model}>{settings.cleanup_model}</option>
+                )}
+                {meridianModels.map((id) => (
+                  <option key={id} value={id}>
+                    {id}
+                  </option>
+                ))}
+              </select>
+            ) : (
+              <input
+                className="field"
+                value={modelDraft}
+                onFocus={() => (modelFocused.current = true)}
+                onBlur={() => {
+                  modelFocused.current = false;
+                  flushModel();
+                }}
+                onChange={(e) => commitModelDebounced(e.target.value)}
+                placeholder="claude-sonnet-5"
+                spellCheck={false}
+              />
+            )}
           </div>
         </div>
 

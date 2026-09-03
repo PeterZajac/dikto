@@ -134,6 +134,21 @@ pub async fn meridian_status(ctx: State<'_, Arc<AppCtx>>) -> Result<bool, ()> {
     Ok(crate::cleanup::CleanupClient::new(url, model).is_reachable().await)
 }
 
+/// Models Meridian offers, for the picker in Settings. Empty list (not an
+/// error) when Meridian is down so the UI just falls back to free text.
+#[tauri::command]
+pub async fn meridian_models(ctx: State<'_, Arc<AppCtx>>) -> Result<Vec<String>, String> {
+    let (url, model) = {
+        let s = ctx.settings.read().unwrap();
+        (s.meridian_url.clone(), s.cleanup_model.clone())
+    };
+    match crate::cleanup::CleanupClient::new(url, model).list_models().await {
+        Ok(models) => Ok(models),
+        Err(crate::cleanup::CleanupError::Network(_)) => Ok(Vec::new()),
+        Err(e) => Err(e.to_string()),
+    }
+}
+
 /// Round-trips a one-token completion through Meridian, so the Settings page
 /// can prove the model actually answers instead of just that something is
 /// listening on the port.

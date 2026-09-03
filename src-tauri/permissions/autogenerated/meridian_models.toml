@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-meridian-models"
+description = "Enables the meridian_models command without any pre-configured scope."
+commands.allow = ["meridian_models"]
+
+[[permission]]
+identifier = "deny-meridian-models"
+description = "Denies the meridian_models command without any pre-configured scope."
+commands.deny = ["meridian_models"]

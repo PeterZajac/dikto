@@ -134,6 +134,36 @@ impl CleanupClient {
         self.http.get(&self.base_url).send().await.is_ok()
     }
 
+    /// Model ids Meridian exposes on its OpenAI-compatible `/v1/models`,
+    /// sorted. Backs the model picker in Settings.
+    pub async fn list_models(&self) -> Result<Vec<String>, CleanupError> {
+        #[derive(Deserialize)]
+        struct ModelList {
+            #[serde(default)]
+            data: Vec<ModelEntry>,
+        }
+        #[derive(Deserialize)]
+        struct ModelEntry {
+            id: String,
+        }
+        let req = self.http.get(format!("{}/v1/models", self.base_url));
+        let resp = self
+            .authorize(req)
+            .send()
+            .await
+            .map_err(|e| CleanupError::Network(e.to_string()))?;
+        let status = resp.status();
+        if !status.is_success() {
+            let body = resp.text().await.unwrap_or_default();
+            return Err(CleanupError::Api { status: status.as_u16(), body });
+        }
+        let list: ModelList = resp.json().await.map_err(|e| CleanupError::Network(e.to_string()))?;
+        let mut ids: Vec<String> = list.data.into_iter().map(|m| m.id).filter(|id| !id.is_empty()).collect();
+        ids.sort();
+        ids.dedup();
+        Ok(ids)
+    }
+
     /// Round-trips the smallest possible completion to prove the credential
     /// and model actually work. Backs the "Otestovať" button.
     pub async fn probe(&self) -> Result<(), CleanupError> {
@@ -191,6 +221,37 @@ mod tests {
             c.clean("no proste ahoj svet akoze").await.unwrap(),
             "Ahoj, svet."
         );
+    }
+
+    #[tokio::test]
+    async fn lists_models_sorted_and_deduplicated() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/v1/models"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "object": "list",
+                "data": [
+                    { "id": "claude-sonnet-5", "object": "model" },
+                    { "id": "claude-opus-5", "object": "model" },
+                    { "id": "claude-sonnet-5", "object": "model" }
+                ]
+            })))
+            .mount(&server)
+            .await;
+        let c = CleanupClient::new(server.uri(), "x".into());
+        assert_eq!(c.list_models().await.unwrap(), vec!["claude-opus-5", "claude-sonnet-5"]);
+    }
+
+    #[tokio::test]
+    async fn model_list_error_surfaces_status() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/v1/models"))
+            .respond_with(ResponseTemplate::new(404))
+            .mount(&server)
+            .await;
+        let c = CleanupClient::new(server.uri(), "x".into());
+        assert!(matches!(c.list_models().await, Err(CleanupError::Api { status: 404, .. })));
     }
 
     #[tokio::test]

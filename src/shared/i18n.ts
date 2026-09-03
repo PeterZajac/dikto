@@ -33,6 +33,7 @@ const STRINGS = {
     sk: "Nepodarilo sa načítať nastavenia. Skús reštartovať appku.",
   },
   "settings.loading": { en: "Loading settings…", sk: "Načítavam nastavenia…" },
+  "settings.saved": { en: "Saved", sk: "Uložené" },
   "settings.saveError": {
     en: "Couldn't save the change — please try again.",
     sk: "Nepodarilo sa uložiť zmenu — skús to znova.",
@@ -82,6 +83,14 @@ const STRINGS = {
   "settings.cleanup.modelDesc": {
     en: "Cleans up the transcript — punctuation, filler words. Doesn't go through Groq.",
     sk: "Čistenie prepísaného textu — interpunkcia, výplňové slová. Nejde cez Groq.",
+  },
+  "settings.cleanup.modelFromMeridian": {
+    en: "List loaded from Meridian.",
+    sk: "Zoznam načítaný z Meridianu.",
+  },
+  "settings.cleanup.modelManual": {
+    en: "Meridian is offline — type the model id; the list appears once it's running.",
+    sk: "Meridian nebeží — zadaj id modelu; zoznam sa zobrazí, keď pobeží.",
   },
   "settings.cleanup.meridianUrl": { en: "Meridian URL", sk: "Meridian URL" },
   "settings.cleanup.testing": { en: "Testing…", sk: "Testujem…" },

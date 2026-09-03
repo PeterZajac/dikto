@@ -9,6 +9,7 @@ fn main() {
             "has_groq_key",
             "test_groq_key",
             "meridian_status",
+            "meridian_models",
             "finish_wizard",
             "history_list",
             "history_delete",

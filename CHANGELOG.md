@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.3 — 2026-09-03
+
+- Settings: the Claude model is picked from a list loaded from Meridian
+  (`GET /v1/models`); falls back to a text field while Meridian is offline.
+- Settings: a "Saved" confirmation flashes after every successful save.
+
 ## 0.1.2 — 2026-09-03
 
 - macOS: the app bundle is now ad-hoc code-signed, so the Accessibility

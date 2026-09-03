@@ -63,6 +63,7 @@ pub fn run() {
             commands::has_groq_key,
             commands::test_groq_key,
             commands::meridian_status,
+            commands::meridian_models,
             commands::finish_wizard,
             commands::history_list,
             commands::history_delete,
