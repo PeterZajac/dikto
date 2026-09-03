@@ -49,17 +49,23 @@ pub struct Settings {
     /// keeping it here avoids the cross-app keychain prompts that came with
     /// a system keyring entry.
     pub groq_api_key: String,
-    /// Days a completed dictation keeps its WAV before the audio is pruned.
-    /// 0 means keep forever. Failed and pending takes are never pruned.
-    pub audio_retention_days: u32,
+    /// Days a completed dictation stays in history (text and audio) before
+    /// it is deleted. 0 means keep forever. Failed and pending takes are
+    /// never pruned.
+    #[serde(alias = "audio_retention_days")]
+    pub history_retention_days: u32,
 }
 
-pub const DEFAULT_AUDIO_RETENTION_DAYS: u32 = 7;
+pub const DEFAULT_HISTORY_RETENTION_DAYS: u32 = 7;
+
+/// Right Option on macOS. On Windows the right Alt is AltGr on SK/CZ layouts
+/// (it types `@ { } [ ]`), so right Ctrl is the default there instead.
+pub const DEFAULT_HOTKEY: &str = if cfg!(target_os = "macos") { "AltGr" } else { "ControlRight" };
 
 impl Default for Settings {
     fn default() -> Self {
         Self {
-            hotkey: "AltGr".into(),
+            hotkey: DEFAULT_HOTKEY.into(),
             language: LanguageMode::Auto,
             // Off by default: dictation must reproduce the user's words
             // verbatim; LLM cleanup is strictly opt-in.
@@ -72,7 +78,7 @@ impl Default for Settings {
             bubble_pos: None,
             autostart: false,
             groq_api_key: String::new(),
-            audio_retention_days: DEFAULT_AUDIO_RETENTION_DAYS,
+            history_retention_days: DEFAULT_HISTORY_RETENTION_DAYS,
         }
     }
 }
@@ -110,7 +116,7 @@ impl Settings {
         if !is_local_http(&self.meridian_url) && !self.meridian_url.starts_with("https://") {
             self.meridian_url = Settings::default().meridian_url;
         }
-        self.audio_retention_days = self.audio_retention_days.min(3650);
+        self.history_retention_days = self.history_retention_days.min(3650);
         self
     }
 }
@@ -158,6 +164,12 @@ mod tests {
     }
 
     #[test]
+    fn default_hotkey_is_a_modifier_that_does_not_type_characters() {
+        let expected = if cfg!(target_os = "macos") { "AltGr" } else { "ControlRight" };
+        assert_eq!(Settings::default().hotkey, expected);
+    }
+
+    #[test]
     fn missing_file_yields_default() {
         assert_eq!(load(Path::new("/nonexistent/nope.json")), Settings::default());
     }
@@ -177,13 +189,13 @@ mod tests {
         std::fs::write(&p, r#"{"language":"sk"}"#).unwrap();
         let s = load(&p);
         assert_eq!(s.language, LanguageMode::Sk);
-        assert_eq!(s.hotkey, "AltGr");
+        assert_eq!(s.hotkey, DEFAULT_HOTKEY);
         assert_eq!(s.cleanup_style, CleanupStyle::Light);
         assert!(!s.wizard_done);
         assert_eq!(s.bubble_pos, None);
         assert!(!s.autostart);
         assert_eq!(s.groq_api_key, "");
-        assert_eq!(s.audio_retention_days, DEFAULT_AUDIO_RETENTION_DAYS);
+        assert_eq!(s.history_retention_days, DEFAULT_HISTORY_RETENTION_DAYS);
     }
 
     #[test]
@@ -205,19 +217,27 @@ mod tests {
         assert_eq!(s.bubble_pos, None);
         assert!(!s.autostart);
         assert_eq!(s.groq_api_key, "");
-        assert_eq!(s.audio_retention_days, DEFAULT_AUDIO_RETENTION_DAYS);
+        assert_eq!(s.history_retention_days, DEFAULT_HISTORY_RETENTION_DAYS);
+    }
+
+    #[test]
+    fn retention_still_loads_under_its_old_audio_only_name() {
+        let dir = tempfile::tempdir().unwrap();
+        let p = dir.path().join("settings.json");
+        std::fs::write(&p, r#"{"audio_retention_days":30}"#).unwrap();
+        assert_eq!(load(&p).history_retention_days, 30);
     }
 
     #[test]
     fn absurd_retention_is_clamped() {
-        let s = Settings { audio_retention_days: u32::MAX, ..Settings::default() };
-        assert_eq!(s.sanitized().audio_retention_days, 3650);
+        let s = Settings { history_retention_days: u32::MAX, ..Settings::default() };
+        assert_eq!(s.sanitized().history_retention_days, 3650);
     }
 
     #[test]
     fn zero_retention_means_keep_forever_and_survives_sanitize() {
-        let s = Settings { audio_retention_days: 0, ..Settings::default() };
-        assert_eq!(s.sanitized().audio_retention_days, 0);
+        let s = Settings { history_retention_days: 0, ..Settings::default() };
+        assert_eq!(s.sanitized().history_retention_days, 0);
     }
 
     #[test]

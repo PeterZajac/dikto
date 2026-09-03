@@ -210,12 +210,17 @@ pub fn spawn(
             });
 
             if let Err(e) = result {
-                eprintln!("hotkey listener failed: {e:?} (missing Accessibility permission?)");
-                on_dead(
-                    "Globálna klávesa nefunguje — chýba povolenie Accessibility. \
-                     Otvor Nastavenia → Súkromie a bezpečnosť → Prístupnosť."
-                        .to_string(),
+                eprintln!("hotkey listener failed: {e:?}");
+                #[cfg(target_os = "macos")]
+                let message = "Globálna klávesa nefunguje — chýba povolenie Prístupnosť. \
+                               Otvor Nastavenia → Súkromie a bezpečnosť → Prístupnosť."
+                    .to_string();
+                #[cfg(not(target_os = "macos"))]
+                let message = format!(
+                    "Globálna klávesa nefunguje — sledovanie klávesnice sa nepodarilo spustiť ({e:?}). \
+                     Skús Dikto reštartovať."
                 );
+                on_dead(message);
             }
         });
     }

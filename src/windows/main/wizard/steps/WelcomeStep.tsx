@@ -1,3 +1,5 @@
+import { isMac } from "../../../../shared/platform";
+
 export default function WelcomeStep() {
   return (
     <>
@@ -9,7 +11,7 @@ export default function WelcomeStep() {
       </p>
       <div className="wizard-keycap-scene">
         <div className="wizard-keycap" aria-hidden>
-          <span className="wizard-keycap__glyph">⌥</span>
+          <span className="wizard-keycap__glyph">{isMac ? "⌥" : "Ctrl"}</span>
           <span className="wizard-keycap__label">pravý</span>
         </div>
       </div>

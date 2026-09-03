@@ -212,7 +212,7 @@ export default function SettingsPage() {
     if (s) commit({ cleanup_enabled: !s.cleanup_enabled });
   };
   const setCleanupStyle = (cleanup_style: CleanupStyle) => commit({ cleanup_style });
-  const setRetention = (audio_retention_days: number) => commit({ audio_retention_days });
+  const setRetention = (history_retention_days: number) => commit({ history_retention_days });
 
   const [modelDraft, setModelDraft] = useState("");
   const [meridianDraft, setMeridianDraft] = useState("");
@@ -565,17 +565,18 @@ export default function SettingsPage() {
         </div>
         <div className="settings-row">
           <div className="settings-row__text">
-            <span className="settings-row__label">Držať audio</span>
+            <span className="settings-row__label">Držať históriu</span>
             <span className="settings-row__desc">
-              Zlyhané a neprepísané nahrávky sa nemažú nikdy — tie zmažeš len ručne v histórii.
+              Staršie dokončené diktáty sa zmažú aj s nahrávkou. Zlyhané a neprepísané nahrávky
+              sa nemažú nikdy — tie zmažeš len ručne v histórii.
             </span>
           </div>
           <div className="settings-row__control">
             <RadioGroup
-              value={settings.audio_retention_days}
+              value={settings.history_retention_days}
               options={RETENTION_OPTIONS}
               onChange={setRetention}
-              name="audio-retention"
+              name="history-retention"
             />
           </div>
         </div>

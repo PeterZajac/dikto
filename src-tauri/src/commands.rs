@@ -304,7 +304,14 @@ pub fn open_privacy_settings(pane: String) {
             .arg(format!("x-apple.systempreferences:com.apple.preference.security?{anchor}"))
             .spawn();
     }
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(target_os = "windows")]
+    {
+        let page = if pane == "microphone" { "privacy-microphone" } else { "privacy-general" };
+        let _ = std::process::Command::new("cmd")
+            .args(["/c", "start", "", &format!("ms-settings:{page}")])
+            .spawn();
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
     {
         let _ = pane;
     }

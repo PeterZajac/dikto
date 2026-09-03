@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { api } from "../../../../shared/ipc";
+import { isMac } from "../../../../shared/platform";
 
 const POLL_MS = 2000;
 
@@ -31,25 +32,29 @@ export default function PermissionsStep() {
       <p className="wizard-step__eyebrow">Povolenia</p>
       <h1 className="wizard-step__title">Over prístupové oprávnenia</h1>
       <p className="wizard-step__desc">
-        Appka potrebuje systémové povolenia, aby vedela vkladať nadiktovaný text a nahrávať mikrofón.
+        {isMac
+          ? "Appka potrebuje systémové povolenia, aby vedela vkladať nadiktovaný text a nahrávať mikrofón."
+          : "Windows sa pri prvom nahrávaní opýta na prístup k mikrofónu — stačí ho povoliť."}
       </p>
 
-      <div className="wizard-row">
-        <div className="wizard-row__text">
-          <span className="wizard-row__label">
-            <StatusDot ok={accessibility} />
-            Asistenčný prístup
-          </span>
-          <span className="wizard-row__hint">{accessibility ? "povolené" : "potrebné pre vkladanie textu"}</span>
+      {isMac && (
+        <div className="wizard-row">
+          <div className="wizard-row__text">
+            <span className="wizard-row__label">
+              <StatusDot ok={accessibility} />
+              Asistenčný prístup
+            </span>
+            <span className="wizard-row__hint">{accessibility ? "povolené" : "potrebné pre vkladanie textu"}</span>
+          </div>
+          <button
+            type="button"
+            className="wizard-btn"
+            onClick={() => void api.openPrivacySettings("accessibility")}
+          >
+            Otvoriť nastavenia
+          </button>
         </div>
-        <button
-          type="button"
-          className="wizard-btn"
-          onClick={() => void api.openPrivacySettings("accessibility")}
-        >
-          Otvoriť nastavenia
-        </button>
-      </div>
+      )}
 
       <div className="wizard-row">
         <div className="wizard-row__text">

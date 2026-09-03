@@ -441,6 +441,8 @@ fn commit(
             let _ = ctx.history.insert(&transcript.text, final_text, language, 0);
         }
     }
+    let days = ctx.settings.read().unwrap().history_retention_days;
+    crate::apply_retention(&ctx.history, &ctx.recordings, days);
     emit_history_changed(ctx);
 }
 

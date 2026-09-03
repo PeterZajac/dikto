@@ -8,7 +8,7 @@ fn main() {
             eprintln!("usage: dikto --selftest <wav-path>");
             std::process::exit(2);
         };
-        std::process::exit(local_wispr_flow_lib::run_selftest(wav_path));
+        std::process::exit(dikto_lib::run_selftest(wav_path));
     }
-    local_wispr_flow_lib::run()
+    dikto_lib::run()
 }

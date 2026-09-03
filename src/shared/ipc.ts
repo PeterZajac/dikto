@@ -19,8 +19,8 @@ export interface Settings {
   bubble_pos: [number, number] | null;
   autostart: boolean;
   groq_api_key: string;
-  /** Days a finished dictation keeps its WAV. 0 = keep forever. */
-  audio_retention_days: number;
+  /** Days a finished dictation stays in history (text + audio). 0 = keep forever. */
+  history_retention_days: number;
 }
 
 /** "pending" = recorded, not transcribed yet. "failed" = audio kept, retryable. */

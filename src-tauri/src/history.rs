@@ -243,21 +243,20 @@ impl HistoryStore {
         Ok(audio)
     }
 
-    /// Frees the audio of completed dictations older than `cutoff_ms` while
-    /// keeping their text. Used when retention is "forever" for text but the
-    /// WAVs would otherwise pile up.
-    pub fn drop_audio_done_before(&self, cutoff_ms: i64) -> rusqlite::Result<Vec<String>> {
+    /// Deletes completed dictations older than `cutoff_ms` and returns the
+    /// audio files they referenced. Failed and pending rows are left alone.
+    pub fn delete_done_before(&self, cutoff_ms: i64) -> rusqlite::Result<(usize, Vec<String>)> {
         let conn = self.0.lock().unwrap();
         let audio = Self::collect_audio(
             &conn,
             "SELECT audio_path FROM dictations WHERE status = ?1 AND ts < ?2",
             params![STATUS_DONE, cutoff_ms],
         )?;
-        conn.execute(
-            "UPDATE dictations SET audio_path = NULL WHERE status = ?1 AND ts < ?2",
+        let deleted = conn.execute(
+            "DELETE FROM dictations WHERE status = ?1 AND ts < ?2",
             params![STATUS_DONE, cutoff_ms],
         )?;
-        Ok(audio)
+        Ok((deleted, audio))
     }
 
     /// Every audio file name still referenced by a row — the keep-set for
@@ -457,17 +456,26 @@ mod tests {
     // ---- retention ----
 
     #[test]
-    fn drop_audio_keeps_the_row_but_frees_the_file() {
+    fn delete_done_before_removes_old_completed_rows_and_reports_their_audio() {
         let (_dir, store) = store();
-        let id = store.insert_pending(Some("old.wav"), 100).unwrap();
-        store.mark_done(id, "old", "Old.", None).unwrap();
-        backdate(&store, id, 0);
+        let old = store.insert_pending(Some("old.wav"), 100).unwrap();
+        store.mark_done(old, "old", "Old.", None).unwrap();
+        backdate(&store, old, 0);
+        let failed = store.insert_pending(Some("failed.wav"), 100).unwrap();
+        store.mark_failed(failed, "429").unwrap();
+        backdate(&store, failed, 0);
+        let pending = store.insert_pending(Some("pending.wav"), 100).unwrap();
+        backdate(&store, pending, 0);
+        let fresh = store.insert_pending(Some("fresh.wav"), 100).unwrap();
+        store.mark_done(fresh, "new", "New.", None).unwrap();
 
-        let freed = store.drop_audio_done_before(now_ms()).unwrap();
+        let (deleted, freed) = store.delete_done_before(1).unwrap();
+        assert_eq!(deleted, 1);
         assert_eq!(freed, vec!["old.wav".to_string()]);
-        let d = store.get(id).unwrap().unwrap();
-        assert_eq!(d.clean, "Old.");
-        assert_eq!(d.audio_path, None);
+        assert!(store.get(old).unwrap().is_none());
+        assert!(store.get(failed).unwrap().is_some());
+        assert!(store.get(pending).unwrap().is_some());
+        assert!(store.get(fresh).unwrap().is_some());
     }
 
     #[test]

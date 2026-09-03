@@ -78,8 +78,6 @@ pub fn run() {
         ])
         .setup(|app| {
             let config_dir = app.path().app_config_dir().expect("app config dir");
-            #[cfg(target_os = "macos")]
-            migrate_from_old_identifier(&config_dir, "settings.json");
             let settings_path = config_dir.join("settings.json");
             if !settings_path.exists() {
                 // First run: write the defaults template so the file always
@@ -91,12 +89,10 @@ pub fn run() {
             let bubble_pos = s.bubble_pos;
 
             let data_dir = app.path().app_data_dir().expect("app data dir");
-            #[cfg(target_os = "macos")]
-            migrate_from_old_identifier(&data_dir, "history.sqlite");
             std::fs::create_dir_all(&data_dir).expect("create app data dir");
             let history = history::HistoryStore::open_or_recover(&data_dir.join("history.sqlite"));
             let recordings = recordings::RecordingStore::new(data_dir.join("audio"));
-            startup_maintenance(&history, &recordings, s.audio_retention_days);
+            startup_maintenance(&history, &recordings, s.history_retention_days);
 
             let capture_next = Arc::new(AtomicBool::new(false));
 
@@ -137,6 +133,7 @@ pub fn run() {
                 hotkey_interp,
             });
             app.manage(ctx.clone());
+            spawn_retention_ticker(ctx.clone());
 
             build_tray(app.handle(), &ctx)?;
 
@@ -218,8 +215,8 @@ pub fn run() {
 }
 
 /// Startup housekeeping for the recordings store, in the order that keeps the
-/// DB and the disk agreeing: rescue takes the last run died on, drop audio
-/// past its retention, then delete WAVs nothing points at any more.
+/// DB and the disk agreeing: rescue takes the last run died on, delete
+/// dictations past their retention, then delete WAVs nothing points at any more.
 fn startup_maintenance(
     history: &history::HistoryStore,
     recordings: &recordings::RecordingStore,
@@ -230,17 +227,7 @@ fn startup_maintenance(
         Ok(_) => {}
         Err(e) => eprintln!("could not recover unfinished dictations: {e}"),
     }
-    if retention_days > 0 {
-        let cutoff = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_millis() as i64
-            - (retention_days as i64 * 24 * 60 * 60 * 1000);
-        match history.drop_audio_done_before(cutoff) {
-            Ok(freed) => recordings.remove_all(freed),
-            Err(e) => eprintln!("could not apply audio retention: {e}"),
-        }
-    }
+    apply_retention(history, recordings, retention_days);
     match history.all_audio_paths() {
         Ok(keep) => recordings.sweep_orphans(&keep.into_iter().collect()),
         // Without a reliable keep-set a sweep would delete real recordings.
@@ -248,26 +235,47 @@ fn startup_maintenance(
     }
 }
 
-/// Copies `filename` from the pre-rename app dir (identifier
-/// `com.peterzajac.localwisprflow`) into `new_dir` if the new location
-/// doesn't have it yet, so upgrading users keep their settings/history after
-/// the `Local Wispr Flow` → `Dikto` identifier change. Best-effort: any
-/// failure just leaves the app to start fresh in `new_dir`.
-#[cfg(target_os = "macos")]
-fn migrate_from_old_identifier(new_dir: &std::path::Path, filename: &str) {
-    const OLD_IDENTIFIER: &str = "com.peterzajac.localwisprflow";
-    let new_file = new_dir.join(filename);
-    if new_file.exists() {
-        return;
+/// Deletes completed dictations (text and audio) older than `retention_days`.
+/// 0 keeps everything. Returns how many rows went.
+pub(crate) fn apply_retention(
+    history: &history::HistoryStore,
+    recordings: &recordings::RecordingStore,
+    retention_days: u32,
+) -> usize {
+    if retention_days == 0 {
+        return 0;
     }
-    let Some(old_file) = new_dir.parent().map(|p| p.join(OLD_IDENTIFIER).join(filename)) else {
-        return;
-    };
-    if !old_file.exists() {
-        return;
+    let cutoff = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as i64
+        - (retention_days as i64 * 24 * 60 * 60 * 1000);
+    match history.delete_done_before(cutoff) {
+        Ok((deleted, freed)) => {
+            recordings.remove_all(freed);
+            deleted
+        }
+        Err(e) => {
+            eprintln!("could not apply history retention: {e}");
+            0
+        }
     }
-    let _ = std::fs::create_dir_all(new_dir);
-    let _ = std::fs::copy(&old_file, &new_file);
+}
+
+/// The app lives in the tray for weeks, so retention can't rely on startup
+/// alone — re-check every hour.
+fn spawn_retention_ticker(ctx: Arc<AppCtx>) {
+    tauri::async_runtime::spawn(async move {
+        let mut tick = tokio::time::interval(std::time::Duration::from_secs(60 * 60));
+        tick.tick().await; // the first tick fires immediately; startup already ran
+        loop {
+            tick.tick().await;
+            let days = ctx.settings.read().unwrap().history_retention_days;
+            if apply_retention(&ctx.history, &ctx.recordings, days) > 0 {
+                pipeline::emit_history_changed(&ctx);
+            }
+        }
+    });
 }
 
 /// Positions the bubble at `saved` if it's still on-screen (some monitor
@@ -434,24 +442,40 @@ mod maintenance_tests {
     }
 
     #[test]
-    fn retention_frees_old_audio_but_never_the_text() {
+    fn retention_deletes_old_completed_dictations_with_their_audio() {
         let f = fixture();
         let name = f.recordings.save(b"old", 1).unwrap();
         let id = f.history.insert_pending(Some(&name), 5000).unwrap();
         f.history.mark_done(id, "surovy", "Cisty.", Some("sk")).unwrap();
         backdate(&f.history, id, 30);
+        let fresh = f.recordings.save(b"fresh", 2).unwrap();
+        let fresh_id = f.history.insert_pending(Some(&fresh), 5000).unwrap();
+        f.history.mark_done(fresh_id, "n", "N.", None).unwrap();
+        backdate(&f.history, fresh_id, 6);
 
         startup_maintenance(&f.history, &f.recordings, 7);
 
-        let row = f.history.get(id).unwrap().unwrap();
-        assert_eq!(row.status, STATUS_DONE);
-        assert_eq!(row.clean, "Cisty.", "text must outlive the audio");
-        assert_eq!(row.audio_path, None);
+        assert!(f.history.get(id).unwrap().is_none(), "row past retention must go");
         assert!(f.recordings.read(&name).is_err(), "the WAV should be gone");
+        let kept = f.history.get(fresh_id).unwrap().unwrap();
+        assert_eq!(kept.status, STATUS_DONE);
+        assert_eq!(kept.audio_path.as_deref(), Some(fresh.as_str()));
+        assert_eq!(f.recordings.read(&fresh).unwrap(), b"fresh");
     }
 
     #[test]
-    fn retention_zero_keeps_audio_forever() {
+    fn apply_retention_reports_how_many_rows_went() {
+        let f = fixture();
+        let id = f.history.insert_pending(None, 5000).unwrap();
+        f.history.mark_done(id, "a", "A.", None).unwrap();
+        backdate(&f.history, id, 8);
+
+        assert_eq!(apply_retention(&f.history, &f.recordings, 7), 1);
+        assert_eq!(apply_retention(&f.history, &f.recordings, 7), 0);
+    }
+
+    #[test]
+    fn retention_zero_keeps_history_forever() {
         let f = fixture();
         let name = f.recordings.save(b"ancient", 1).unwrap();
         let id = f.history.insert_pending(Some(&name), 5000).unwrap();
@@ -465,7 +489,7 @@ mod maintenance_tests {
     }
 
     #[test]
-    fn a_failed_take_keeps_its_audio_no_matter_how_old() {
+    fn a_failed_take_stays_in_history_no_matter_how_old() {
         let f = fixture();
         let name = f.recordings.save(b"rate-limited", 1).unwrap();
         let id = f.history.insert_pending(Some(&name), 5000).unwrap();
@@ -474,7 +498,8 @@ mod maintenance_tests {
 
         startup_maintenance(&f.history, &f.recordings, 7);
 
-        assert_eq!(f.history.get(id).unwrap().unwrap().audio_path.as_deref(), Some(name.as_str()));
+        let row = f.history.get(id).unwrap().expect("failed rows are never pruned");
+        assert_eq!(row.audio_path.as_deref(), Some(name.as_str()));
         assert_eq!(f.recordings.read(&name).unwrap(), b"rate-limited");
     }
 
