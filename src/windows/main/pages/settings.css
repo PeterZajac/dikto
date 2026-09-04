@@ -277,6 +277,11 @@
   background: var(--accent);
 }
 
+/* Monochrome accent: the thumb must flip with the track or it vanishes. */
+.toggle.is-on .toggle__thumb {
+  background: var(--accent-contrast);
+}
+
 .toggle:disabled {
   opacity: 0.5;
 }

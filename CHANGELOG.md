@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.1.5 — 2026-09-04
+
+- Monochrome look: the violet accent is replaced by black (light mode) and
+  white (dark mode) to match the icon; the sidebar shows the new icon.
+
 ## 0.1.4 — 2026-09-04
 
 - New app icon (white ribbon on a black squircle) and a monochrome

@@ -1,5 +1,6 @@
 import type { ReactElement } from "react";
 import { useT, type StringKey } from "../../shared/i18n";
+import brandIcon from "../../assets/dikto-icon.png";
 
 export type NavPage = "settings" | "history";
 
@@ -80,15 +81,7 @@ function WarningRow({ warning }: { warning: FooterWarning }) {
 }
 
 function BrandMark() {
-  return (
-    <div className="brand-mark" aria-hidden>
-      <svg viewBox="0 0 20 20" width="16" height="16" fill="none">
-        <rect x="2.8" y="7" width="2.4" height="6" rx="1.2" fill="currentColor" />
-        <rect x="8.8" y="3.5" width="2.4" height="13" rx="1.2" fill="currentColor" />
-        <rect x="14.8" y="7" width="2.4" height="6" rx="1.2" fill="currentColor" />
-      </svg>
-    </div>
-  );
+  return <img className="brand-mark" src={brandIcon} alt="" aria-hidden />;
 }
 
 function SettingsIcon({ active }: { active: boolean }) {

@@ -40,15 +40,10 @@ body {
 }
 
 .brand-mark {
-  display: flex;
-  align-items: center;
-  justify-content: center;
   width: 26px;
   height: 26px;
-  flex-shrink: 0;
-  border-radius: var(--radius-sm);
-  background: var(--accent);
-  color: var(--accent-contrast);
+  border-radius: 6px;
+  display: block;
 }
 
 .sidebar__brand-name {

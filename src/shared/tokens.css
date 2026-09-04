@@ -50,11 +50,12 @@
   --shadow-sm: 0 1px 2px rgba(15, 15, 20, 0.06);
   --shadow-md: 0 8px 24px rgba(15, 15, 20, 0.1);
 
-  /* Accent — Dikto violet */
-  --accent: #6e56cf;
+  /* Accent — monochrome, matching the black-and-white app icon:
+     near-black on light, near-white on dark. */
+  --accent: #141416;
   --accent-contrast: #ffffff;
-  --accent-hover: color-mix(in srgb, var(--accent) 92%, black);
-  --accent-active: color-mix(in srgb, var(--accent) 84%, black);
+  --accent-hover: color-mix(in srgb, var(--accent) 82%, white);
+  --accent-active: color-mix(in srgb, var(--accent) 70%, white);
   --accent-subtle: color-mix(in srgb, var(--accent) 13%, transparent);
   --accent-subtle-strong: color-mix(in srgb, var(--accent) 22%, transparent);
   --accent-border: color-mix(in srgb, var(--accent) 45%, transparent);
@@ -95,7 +96,10 @@
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --accent: #8672e0;
+    --accent: #f4f4f5;
+    --accent-contrast: #0c0c0e;
+    --accent-hover: color-mix(in srgb, var(--accent) 86%, black);
+    --accent-active: color-mix(in srgb, var(--accent) 74%, black);
     --bg: #0c0c0e;
     --bg-elevated: #18181b;
     --bg-hover: rgba(255, 255, 255, 0.06);
