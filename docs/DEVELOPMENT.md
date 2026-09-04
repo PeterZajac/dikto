@@ -10,6 +10,13 @@ cargo clippy --all-targets -- -D warnings
 
 CI runs the same on macOS plus `cargo check` on Windows for every push.
 
+`src-tauri/src/pipeline_e2e.rs` runs the real dictation pipeline end to end
+on Tauri's `MockRuntime`: a generated WAV goes through a mock Groq, a mock
+Meridian, the SQLite history and the recording store, and ends in the
+clipboard. Delivery is always driven past its paste deadline so the test
+never types into the app that has focus; the hotkey and microphone are the
+only stages it does not exercise.
+
 ## UI tests (Playwright)
 
 ```sh

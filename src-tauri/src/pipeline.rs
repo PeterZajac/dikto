@@ -11,7 +11,7 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
 use std::time::{Duration, Instant};
 use tauri::menu::{CheckMenuItem, MenuItem, Submenu};
-use tauri::{AppHandle, Emitter, Manager, Wry};
+use tauri::{AppHandle, Emitter, Manager, Runtime, Wry};
 
 /// A take whose audio is already on disk and whose history row is claimed.
 /// Everything downstream only updates that row, so no failure past this point
@@ -30,21 +30,28 @@ pub const INJECT_GRACE: Duration = Duration::from_secs(15);
 /// The tray's four language `CheckMenuItem`s, keyed by the mode each one
 /// represents — `apply_settings` uses this to keep the tray's checkmarks in
 /// sync whenever settings change from any source (Settings page, tray itself).
-pub type TrayLangItems = Vec<(LanguageMode, CheckMenuItem<Wry>)>;
+pub type TrayLangItems<R = Wry> = Vec<(LanguageMode, CheckMenuItem<R>)>;
 
 /// Tray entries whose text follows the UI language.
-#[derive(Clone)]
-pub struct TrayLabels {
-    pub open: MenuItem<Wry>,
-    pub quit: MenuItem<Wry>,
-    pub language: Submenu<Wry>,
+pub struct TrayLabels<R: Runtime = Wry> {
+    pub open: MenuItem<R>,
+    pub quit: MenuItem<R>,
+    pub language: Submenu<R>,
+}
+
+impl<R: Runtime> Clone for TrayLabels<R> {
+    fn clone(&self) -> Self {
+        Self { open: self.open.clone(), quit: self.quit.clone(), language: self.language.clone() }
+    }
 }
 
 pub const TRAY_OPEN: (&str, &str) = ("Open Dikto", "Otvoriť Dikto");
 pub const TRAY_QUIT: (&str, &str) = ("Quit", "Ukončiť");
 pub const TRAY_LANGUAGE: (&str, &str) = ("Dictation language", "Jazyk diktovania");
 
-pub struct AppCtx {
+/// Generic over the Tauri runtime so the pipeline can run on `MockRuntime`
+/// in tests; the app itself always uses the default `Wry`.
+pub struct AppCtx<R: Runtime = Wry> {
     pub phase: Mutex<Phase>,
     pub recorder: Recorder,
     pub settings: RwLock<Settings>,
@@ -56,7 +63,7 @@ pub struct AppCtx {
     /// value at spawn time and drop their FSM event if it no longer matches —
     /// otherwise a stale task from a superseded take could clobber a new one.
     pub take_gen: AtomicU64,
-    pub app: AppHandle,
+    pub app: AppHandle<R>,
     /// Same Arc handed to hotkey::spawn — set_settings updates it live so a
     /// hotkey change hot-applies without restarting the listener thread.
     pub hotkey_name: Arc<RwLock<String>>,
@@ -72,9 +79,9 @@ pub struct AppCtx {
     pub capture_next: Arc<AtomicBool>,
     /// Set once by `build_tray` after the menu is built; `None` until then.
     /// `apply_settings` uses it to refresh the tray's language checkmarks.
-    pub tray_lang_items: Mutex<Option<TrayLangItems>>,
+    pub tray_lang_items: Mutex<Option<TrayLangItems<R>>>,
     /// Set by `build_tray`; `apply_settings` retitles them on a UI-language change.
-    pub tray_labels: Mutex<Option<TrayLabels>>,
+    pub tray_labels: Mutex<Option<TrayLabels<R>>>,
     /// Same Arc handed to the hotkey listener's `on_dead` callback, so its
     /// message follows a UI-language change without restarting the thread.
     pub ui_lang: Arc<RwLock<UiLanguage>>,
@@ -89,7 +96,7 @@ pub struct AppCtx {
 /// the take has since been cancelled/superseded (its generation no longer
 /// matches), the event is dropped instead of applied. Mirrors `advance`'s
 /// locked check-then-write, minus the emit.
-fn apply_for(ctx: &AppCtx, gen: u64, ev: Event) -> Option<Phase> {
+fn apply_for<R: Runtime>(ctx: &AppCtx<R>, gen: u64, ev: Event) -> Option<Phase> {
     let mut guard = ctx.phase.lock().unwrap();
     if ctx.take_gen.load(Ordering::SeqCst) != gen {
         return None;
@@ -102,13 +109,13 @@ fn apply_for(ctx: &AppCtx, gen: u64, ev: Event) -> Option<Phase> {
 /// Atomically: check the take is current, apply the transition, write the
 /// phase, then emit. Returns false when the event was dropped (stale take
 /// or illegal transition).
-pub(crate) fn advance(ctx: &AppCtx, gen: u64, ev: Event, message: Option<&str>) -> bool {
+pub(crate) fn advance<R: Runtime>(ctx: &AppCtx<R>, gen: u64, ev: Event, message: Option<&str>) -> bool {
     advance_with(ctx, gen, ev, message, false)
 }
 
 /// `retryable` tells the bubble the audio is still on disk and re-running
 /// STT could fix it, so it can offer a retry button.
-pub(crate) fn advance_with(ctx: &AppCtx, gen: u64, ev: Event, message: Option<&str>, retryable: bool) -> bool {
+pub(crate) fn advance_with<R: Runtime>(ctx: &AppCtx<R>, gen: u64, ev: Event, message: Option<&str>, retryable: bool) -> bool {
     let next = {
         let mut guard = ctx.phase.lock().unwrap();
         if ctx.take_gen.load(Ordering::SeqCst) != gen {
@@ -131,7 +138,7 @@ pub(crate) fn advance_with(ctx: &AppCtx, gen: u64, ev: Event, message: Option<&s
 /// optionally start a new take (bump take_gen), write the phase, then emit.
 /// Returns the take gen when the transition applied; None means the event
 /// was dropped with zero side effects (no gen bump, no phase write, no emit).
-pub(crate) fn begin(ctx: &AppCtx, ev: Event, new_take: bool, message: Option<&str>) -> Option<u64> {
+pub(crate) fn begin<R: Runtime>(ctx: &AppCtx<R>, ev: Event, new_take: bool, message: Option<&str>) -> Option<u64> {
     let (next, gen) = {
         let mut guard = ctx.phase.lock().unwrap();
         let next = transition(*guard, ev)?;
@@ -153,7 +160,7 @@ pub(crate) fn begin(ctx: &AppCtx, ev: Event, new_take: bool, message: Option<&st
 /// Stashes `take` as the one the retry button targets, iff `gen` is still the
 /// current take — checked and written atomically under `ctx.phase` (the gen
 /// authority) so a stale failure landing late can't clobber a newer take's.
-fn store_pending_if_current(ctx: &AppCtx, gen: u64, take: TakeRecord) -> bool {
+fn store_pending_if_current<R: Runtime>(ctx: &AppCtx<R>, gen: u64, take: TakeRecord) -> bool {
     let _phase_guard = ctx.phase.lock().unwrap();
     if ctx.take_gen.load(Ordering::SeqCst) != gen {
         return false;
@@ -165,7 +172,7 @@ fn store_pending_if_current(ctx: &AppCtx, gen: u64, take: TakeRecord) -> bool {
 /// Re-emits the current phase with a new message, without moving the FSM —
 /// used to narrate a rate-limit wait while still Transcribing. Gen-guarded so
 /// a stale take can't overwrite what the user is looking at.
-fn emit_message(ctx: &AppCtx, gen: u64, message: &str) {
+fn emit_message<R: Runtime>(ctx: &AppCtx<R>, gen: u64, message: &str) {
     let phase = {
         let guard = ctx.phase.lock().unwrap();
         if ctx.take_gen.load(Ordering::SeqCst) != gen {
@@ -179,7 +186,7 @@ fn emit_message(ctx: &AppCtx, gen: u64, message: &str) {
     );
 }
 
-pub(crate) fn emit_history_changed(ctx: &AppCtx) {
+pub(crate) fn emit_history_changed<R: Runtime>(ctx: &AppCtx<R>) {
     let _ = ctx.app.emit("history:changed", serde_json::json!({}));
 }
 
@@ -187,7 +194,7 @@ pub(crate) fn emit_history_changed(ctx: &AppCtx) {
 /// single byte goes to Groq. Returns None only if both the file write and the
 /// row insert failed, in which case dictation still proceeds — just without
 /// the safety net.
-fn persist_take(ctx: &AppCtx, gen: u64, wav: &[u8], duration_ms: i64) -> Option<TakeRecord> {
+fn persist_take<R: Runtime>(ctx: &AppCtx<R>, gen: u64, wav: &[u8], duration_ms: i64) -> Option<TakeRecord> {
     let audio_name = match ctx.recordings.save(wav, gen) {
         Ok(name) => Some(name),
         Err(e) => {
@@ -210,7 +217,7 @@ fn persist_take(ctx: &AppCtx, gen: u64, wav: &[u8], duration_ms: i64) -> Option<
     }
 }
 
-fn show_bubble(ctx: &AppCtx) {
+fn show_bubble<R: Runtime>(ctx: &AppCtx<R>) {
     if let Some(w) = ctx.app.get_webview_window("bubble") {
         let saved = ctx.settings.read().unwrap().bubble_pos;
         crate::position_bubble(&w, saved);
@@ -219,7 +226,7 @@ fn show_bubble(ctx: &AppCtx) {
 }
 
 
-pub fn handle_signal(ctx: Arc<AppCtx>, sig: HotkeySignal) {
+pub fn handle_signal<R: Runtime>(ctx: Arc<AppCtx<R>>, sig: HotkeySignal) {
     match sig {
         HotkeySignal::Start => start_recording(&ctx),
         HotkeySignal::Stop => {
@@ -232,7 +239,7 @@ pub fn handle_signal(ctx: Arc<AppCtx>, sig: HotkeySignal) {
     }
 }
 
-fn start_recording(ctx: &Arc<AppCtx>) {
+fn start_recording<R: Runtime>(ctx: &Arc<AppCtx<R>>) {
     // New take: any in-flight async work from a previous one is now stale.
     let Some(gen) = begin(ctx, Event::StartRequested, true, None) else {
         return;
@@ -262,7 +269,7 @@ fn start_recording(ctx: &Arc<AppCtx>) {
     }
 }
 
-pub fn cancel(ctx: &Arc<AppCtx>) {
+pub fn cancel<R: Runtime>(ctx: &Arc<AppCtx<R>>) {
     // Gen only bumps (and recorder only stops) on a legal transition —
     // otherwise (e.g. Esc during Injecting, where Cancel is illegal) we'd
     // invalidate the in-flight take's gen while its phase stays put, wedging it.
@@ -275,7 +282,7 @@ pub fn cancel(ctx: &Arc<AppCtx>) {
     }
 }
 
-async fn finish(ctx: Arc<AppCtx>, gen: u64) {
+async fn finish<R: Runtime>(ctx: Arc<AppCtx<R>>, gen: u64) {
     let Some((samples, rate, ch)) = ctx.recorder.stop() else {
         // Recorder was already stopped (e.g. a concurrent cancel) — only
         // move to Idle if we're still the take that owns the phase.
@@ -305,8 +312,8 @@ async fn finish(ctx: Arc<AppCtx>, gen: u64) {
 ///
 /// `inject_deadline` is when pasting at the cursor stops being safe. `None`
 /// means always paste (a retry the user asked for explicitly).
-pub async fn transcribe_and_deliver(
-    ctx: Arc<AppCtx>,
+pub async fn transcribe_and_deliver<R: Runtime>(
+    ctx: Arc<AppCtx<R>>,
     wav: Vec<u8>,
     gen: u64,
     take: Option<TakeRecord>,
@@ -465,8 +472,8 @@ pub async fn transcribe_and_deliver(
 /// Writes the finished transcript to the take's history row. Falls back to a
 /// fresh row when the take was never claimed (disk or DB trouble at capture
 /// time) so the text still survives.
-fn commit(
-    ctx: &AppCtx,
+fn commit<R: Runtime>(
+    ctx: &AppCtx<R>,
     take: &Option<TakeRecord>,
     transcript: &crate::stt::Transcript,
     final_text: &str,
@@ -507,7 +514,7 @@ const MAX_TAKE_SECS: f32 = 300.0;
 /// as the take grows; the final pass still transcribes the full audio.
 const PARTIAL_WINDOW_SECS: f32 = 15.0;
 
-fn spawn_partial_loop(ctx: Arc<AppCtx>, gen: u64) {
+fn spawn_partial_loop<R: Runtime>(ctx: Arc<AppCtx<R>>, gen: u64) {
     tauri::async_runtime::spawn(async move {
         let mut interval =
             tokio::time::interval(std::time::Duration::from_millis(PARTIAL_INTERVAL_MS));
@@ -604,3 +611,7 @@ fn spawn_partial_loop(ctx: Arc<AppCtx>, gen: u64) {
         }
     });
 }
+
+#[cfg(test)]
+#[path = "pipeline_e2e.rs"]
+mod e2e_tests;

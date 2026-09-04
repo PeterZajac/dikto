@@ -327,7 +327,7 @@ fn listener_death_message(ui: UiLanguage, death: &hotkey::ListenerDeath) -> Stri
 /// Positions the bubble at `saved` if it's still on-screen (some monitor
 /// intersects where the bubble would land), otherwise falls back to the
 /// default bottom-center placement.
-pub(crate) fn position_bubble(win: &tauri::WebviewWindow, saved: Option<(i32, i32)>) {
+pub(crate) fn position_bubble<R: tauri::Runtime>(win: &tauri::WebviewWindow<R>, saved: Option<(i32, i32)>) {
     if let Some(pos) = saved {
         if fits_on_a_monitor(win, pos) {
             let _ = win.set_position(tauri::PhysicalPosition::new(pos.0, pos.1));
@@ -344,7 +344,7 @@ pub(crate) fn position_bubble(win: &tauri::WebviewWindow, saved: Option<(i32, i3
 
 /// True if placing `win` at `pos` (top-left, physical pixels) would overlap
 /// at least one currently available monitor.
-fn fits_on_a_monitor(win: &tauri::WebviewWindow, pos: (i32, i32)) -> bool {
+fn fits_on_a_monitor<R: tauri::Runtime>(win: &tauri::WebviewWindow<R>, pos: (i32, i32)) -> bool {
     let Ok(size) = win.outer_size() else { return false };
     let Ok(monitors) = win.available_monitors() else { return false };
     let (x, y) = (pos.0 as i64, pos.1 as i64);
