@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.1.6 — 2026-09-04
+
+- The bubble's error message dismisses itself after 8 seconds; the take
+  stays in History for a retry.
+
 ## 0.1.5 — 2026-09-04
 
 - Monochrome look: the violet accent is replaced by black (light mode) and

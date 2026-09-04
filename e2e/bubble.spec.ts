@@ -38,6 +38,19 @@ test.describe("bubble", () => {
     expect(await app.lastCall("cancel_dictation")).toBeTruthy();
   });
 
+  test("an error dismisses itself after 8 s", async ({ page }) => {
+    await page.clock.install();
+    const app = await openApp(page, "/bubble.html", { windowLabel: "bubble" });
+    await app.emit("dictation:state", { phase: "error", message: "Groq API key missing", retryable: true });
+    await expect(page.locator(".bubble__error")).toBeVisible();
+    await page.clock.fastForward(7_500);
+    expect(await app.lastCall("cancel_dictation")).toBeUndefined();
+    await page.clock.fastForward(1_000);
+    await expect.poll(async () => app.lastCall("cancel_dictation")).toBeTruthy();
+    await app.emit("dictation:state", { phase: "idle", message: null });
+    await expect(page.locator(".bubble-idle")).toBeVisible();
+  });
+
   test("clicking the recording pill cancels", async ({ page }) => {
     const app = await openApp(page, "/bubble.html", { windowLabel: "bubble" });
     await app.emit("dictation:state", { phase: "recording", message: null });

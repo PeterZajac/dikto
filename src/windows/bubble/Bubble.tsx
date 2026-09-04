@@ -21,6 +21,8 @@ const BAR_COUNT = 24;
 const SIZE_DEFAULT = { width: 340, height: 64 };
 /** Errors are full API messages; the window has to grow or they get cut off. */
 const SIZE_ERROR = { width: 460, height: 190 };
+/** An error pill dismisses itself after this long; the take stays in History. */
+const ERROR_AUTO_HIDE_MS = 8_000;
 
 const cancel = () => void invoke("cancel_dictation");
 const retry = () => void invoke("retry_transcription");
@@ -100,6 +102,14 @@ export default function Bubble() {
   useEffect(() => {
     if (phase !== "idle" || !message) return;
     const t = window.setTimeout(() => setMessage(null), 2200);
+    return () => window.clearTimeout(t);
+  }, [phase, message]);
+
+  // Errors linger long enough to read and hit retry, then get out of the way
+  // exactly like ✕ would (the pipeline returns to idle, History keeps the take).
+  useEffect(() => {
+    if (phase !== "error") return;
+    const t = window.setTimeout(cancel, ERROR_AUTO_HIDE_MS);
     return () => window.clearTimeout(t);
   }, [phase, message]);
 
