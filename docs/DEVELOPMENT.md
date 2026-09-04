@@ -10,6 +10,20 @@ cargo clippy --all-targets -- -D warnings
 
 CI runs the same on macOS plus `cargo check` on Windows for every push.
 
+## UI tests (Playwright)
+
+```sh
+pnpm exec playwright install chromium   # once
+pnpm test:e2e
+```
+
+They run the React windows (settings, history, wizard, bubble) against the
+Vite dev server with the Tauri runtime replaced by an in-page mock
+(`e2e/tauri-mock.ts`), once with a macOS user agent and once with a Windows
+one. They cover UI flows and the IPC contract, not the Rust pipeline; that
+is `cargo test`. `tauri-driver` (real WebDriver E2E) is not used because it
+does not support macOS. Traces of failed runs land in `test-results/`.
+
 ## Self-test
 
 A headless check of the whole pipeline without the GUI:
