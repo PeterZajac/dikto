@@ -28,3 +28,7 @@ dist-ssr
 # Playwright
 test-results
 playwright-report
+
+# tauri icon also emits mobile sets we don't ship
+src-tauri/icons/android
+src-tauri/icons/ios

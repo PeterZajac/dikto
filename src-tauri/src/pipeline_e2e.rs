@@ -16,10 +16,14 @@ use tauri::Listener;
 use wiremock::matchers::{header, method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
-/// The clipboard is global to the machine, so tests that read it back must
+/// Every delivery writes the machine-wide clipboard, so the scenarios must
 /// not interleave. Each #[tokio::test] runs on its own runtime thread, so
 /// holding a std mutex across the await is harmless here.
 static CLIPBOARD: Mutex<()> = Mutex::new(());
+
+fn serial() -> std::sync::MutexGuard<'static, ()> {
+    CLIPBOARD.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+}
 
 struct Harness {
     _dir: tempfile::TempDir,
@@ -155,7 +159,7 @@ fn clipboard_text() -> Option<String> {
 #[tokio::test]
 #[allow(clippy::await_holding_lock)]
 async fn dictation_lands_in_history_and_clipboard_with_cleanup() {
-    let _clip = CLIPBOARD.lock().unwrap();
+    let _serial = serial();
     let (groq, meridian) = (MockServer::start().await, MockServer::start().await);
     groq_ok(&groq, "hello world this is dikto").await;
     meridian_ok(&meridian, "Hello world, this is Dikto.").await;
@@ -192,7 +196,7 @@ async fn dictation_lands_in_history_and_clipboard_with_cleanup() {
 #[tokio::test]
 #[allow(clippy::await_holding_lock)]
 async fn meridian_failure_falls_back_to_the_raw_transcript() {
-    let _clip = CLIPBOARD.lock().unwrap();
+    let _serial = serial();
     let (groq, meridian) = (MockServer::start().await, MockServer::start().await);
     groq_ok(&groq, "raw words").await;
     Mock::given(method("POST"))
@@ -216,7 +220,9 @@ async fn meridian_failure_falls_back_to_the_raw_transcript() {
 }
 
 #[tokio::test]
+#[allow(clippy::await_holding_lock)]
 async fn cleanup_disabled_skips_meridian_entirely() {
+    let _serial = serial();
     let (groq, meridian) = (MockServer::start().await, MockServer::start().await);
     groq_ok(&groq, "verbatim").await;
     Mock::given(method("POST")).respond_with(ResponseTemplate::new(200)).expect(0).mount(&meridian).await;
@@ -231,7 +237,9 @@ async fn cleanup_disabled_skips_meridian_entirely() {
 }
 
 #[tokio::test]
+#[allow(clippy::await_holding_lock)]
 async fn groq_rate_limit_is_retried_and_narrated() {
+    let _serial = serial();
     let (groq, meridian) = (MockServer::start().await, MockServer::start().await);
     Mock::given(method("POST"))
         .and(path("/openai/v1/audio/transcriptions"))
@@ -260,7 +268,9 @@ async fn groq_rate_limit_is_retried_and_narrated() {
 }
 
 #[tokio::test]
+#[allow(clippy::await_holding_lock)]
 async fn groq_rejection_keeps_the_audio_and_offers_a_retry() {
+    let _serial = serial();
     let (groq, meridian) = (MockServer::start().await, MockServer::start().await);
     Mock::given(method("POST"))
         .respond_with(ResponseTemplate::new(401).set_body_string("invalid api key"))
@@ -285,7 +295,9 @@ async fn groq_rejection_keeps_the_audio_and_offers_a_retry() {
 }
 
 #[tokio::test]
+#[allow(clippy::await_holding_lock)]
 async fn silence_is_reported_and_not_pasted() {
+    let _serial = serial();
     let (groq, meridian) = (MockServer::start().await, MockServer::start().await);
     groq_ok(&groq, "   ").await;
     let h = Harness::new(settings_for(&groq, &meridian, false));
@@ -304,7 +316,9 @@ async fn silence_is_reported_and_not_pasted() {
 }
 
 #[tokio::test]
+#[allow(clippy::await_holding_lock)]
 async fn messages_follow_the_slovak_ui_language() {
+    let _serial = serial();
     let (groq, meridian) = (MockServer::start().await, MockServer::start().await);
     Mock::given(method("POST"))
         .respond_with(ResponseTemplate::new(401).set_body_string("nope"))
@@ -322,7 +336,9 @@ async fn messages_follow_the_slovak_ui_language() {
 }
 
 #[tokio::test]
+#[allow(clippy::await_holding_lock)]
 async fn a_cancelled_take_still_keeps_its_transcript_in_history() {
+    let _serial = serial();
     let (groq, meridian) = (MockServer::start().await, MockServer::start().await);
     groq_ok(&groq, "kept anyway").await;
     let h = Harness::new(settings_for(&groq, &meridian, false));

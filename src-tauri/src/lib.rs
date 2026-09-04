@@ -443,6 +443,15 @@ fn build_tray(app: &tauri::AppHandle, ctx: &Arc<AppCtx>) -> tauri::Result<()> {
             }
             _ => {}
         });
+    // macOS menu bar: a monochrome template glyph so the system tints it for
+    // light and dark bars. Elsewhere the coloured app icon reads better.
+    #[cfg(target_os = "macos")]
+    {
+        if let Ok(icon) = tauri::image::Image::from_bytes(include_bytes!("../icons/tray.png")) {
+            builder = builder.icon(icon).icon_as_template(true);
+        }
+    }
+    #[cfg(not(target_os = "macos"))]
     if let Some(icon) = app.default_window_icon().cloned() {
         builder = builder.icon(icon);
     }

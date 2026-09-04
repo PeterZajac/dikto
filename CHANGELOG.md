@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.1.4 — 2026-09-04
+
+- New app icon (white ribbon on a black squircle) and a monochrome
+  template glyph for the macOS menu bar.
+- Playwright UI tests and an end-to-end pipeline test on Tauri's
+  MockRuntime; no behaviour change.
+
 ## 0.1.3 — 2026-09-03
 
 - Settings: the Claude model is picked from a list loaded from Meridian
