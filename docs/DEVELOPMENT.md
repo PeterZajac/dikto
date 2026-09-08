@@ -87,12 +87,19 @@ to Dikto.
 
 ## Releasing
 
-Bump `version` in `package.json`, `src-tauri/tauri.conf.json` and
-`src-tauri/Cargo.toml`, add a `CHANGELOG.md` entry, then:
+```sh
+pnpm bump 0.1.7
+```
+
+That rewrites `version` in `package.json`, `src-tauri/tauri.conf.json`,
+`src-tauri/Cargo.toml` and `src-tauri/Cargo.lock`, verifies each one landed,
+and opens a dated `CHANGELOG.md` section. It refuses to run on a dirty tree
+and never commits or tags — write the changelog bullets yourself, then:
 
 ```sh
-git tag v0.1.2
-git push origin v0.1.2
+git commit -am "chore: release v0.1.7"
+git tag v0.1.7
+git push origin main v0.1.7
 ```
 
 The release workflow builds a universal macOS `.dmg` and a Windows `.exe`

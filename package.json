@@ -9,6 +9,7 @@
     "build": "tsc && vite build",
     "preview": "vite preview",
     "tauri": "tauri",
+    "bump": "scripts/bump-version.sh",
     "test:e2e": "playwright test"
   },
   "dependencies": {
