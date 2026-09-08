@@ -74,6 +74,20 @@ every launch, and a cdhash is a hash of the code — hence the dead toggle. The
 same command on a binary signed with "Dikto Dev" gives `identifier "…" and
 certificate leaf H"…"` instead, which survives rebuilds.
 
+`tauri.conf.json` keeps `signingIdentity: "-"` on purpose: a named identity
+makes `tauri build` abort on any machine that doesn't have it in its keychain,
+which would break a fresh clone and hide `dev-install.sh`'s own "identity not
+found" warning. The real identity is supplied out of band — `dev-install.sh`
+re-signs after the build, and the release workflow passes
+`APPLE_SIGNING_IDENTITY`.
+
+The updater delivers a bundle signed with whatever identity built it. "Dikto
+Dev" is a self-signed root trusted only on the Mac that ran
+`make-signing-cert.sh`, so on anyone else's machine that signature has an
+invalid authority. Before updates go to anyone but the author, this needs a
+Developer ID certificate — which in turn forces `hardenedRuntime: true` and
+notarization.
+
 Hardened runtime is off because it buys nothing without notarization, **not**
 because the app can't take it: the bundle contains no dylibs or frameworks
 and `otool -L` on the binary lists only `/System` and `/usr` paths. cpal uses
@@ -112,8 +126,13 @@ pnpm bump 0.1.7
 
 That rewrites `version` in `package.json`, `src-tauri/tauri.conf.json`,
 `src-tauri/Cargo.toml` and `src-tauri/Cargo.lock`, verifies each one landed,
-and opens a dated `CHANGELOG.md` section. It refuses to run on a dirty tree
-and never commits or tags — write the changelog bullets yourself, then:
+and turns the `## Unreleased` section of `CHANGELOG.md` into a dated one for
+this version (or opens an empty section if there is none). It refuses to run
+on a dirty tree and never commits or tags.
+
+Write the bullets as the work lands, under `## Unreleased` — they become the
+GitHub release body *and* the notes the in-app update banner shows, so they
+are user-facing. Then:
 
 ```sh
 git commit -am "chore: release v0.1.7"

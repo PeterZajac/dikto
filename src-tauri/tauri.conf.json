@@ -64,7 +64,7 @@
       }
     },
     "macOS": {
-      "signingIdentity": "Dikto Dev",
+      "signingIdentity": "-",
       "hardenedRuntime": false
     }
   },
