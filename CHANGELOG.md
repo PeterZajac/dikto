@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.1.7 — 2026-09-08
 
 - **Notes tab** — a plain-text notepad with a list on the left and an editor
   on the right, autosaved as you type. Dictate straight into a note: the text
@@ -9,8 +9,11 @@
   alone.
 - **In-app updates** — Dikto notices a new release, shows the changelog, and
   installs it on click. Never silently.
-- `pnpm bump <version>` updates all four version files and opens the changelog
-  section for a release.
+- **One-time permission reset.** This build is signed with a stable
+  certificate instead of an ad-hoc one, so macOS sees a new identity and may
+  ask for Accessibility and Microphone again. If the toggles look enabled but
+  dictation does nothing, run `tccutil reset All com.peterzajac.dikto` once.
+  Updates after this one keep the grants.
 
 ## 0.1.6 — 2026-09-04
 
