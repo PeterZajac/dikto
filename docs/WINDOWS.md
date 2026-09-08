@@ -31,6 +31,10 @@ experimental until someone does and reports back.
 - Autostart toggle writing the registry key.
 - Bubble transparency and always-on-top behaviour on WebView2.
 - The NSIS installer itself (per-user mode, English + Slovak strings).
+- Auto-update. The release workflow builds and signs the Windows updater
+  artifacts, but nothing about Windows auto-update is advertised: it is
+  unknown whether the NSIS update installs silently or reopens the wizard,
+  and whether SmartScreen blocks the downloaded installer.
 
 ## If you test on Windows
 

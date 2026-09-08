@@ -1,5 +1,9 @@
 name: Release
 
+# Tags only, deliberately. A pull_request trigger — or a workflow_dispatch
+# taking a ref — would hand the updater's signing key to anyone who can open
+# a PR, and that key can install arbitrary code into an app that already holds
+# Accessibility and Microphone grants.
 on:
   push:
     tags:
@@ -16,12 +20,8 @@ jobs:
         include:
           - os: macos-14
             args: --target universal-apple-darwin
-            bundle-glob: |
-              src-tauri/target/universal-apple-darwin/release/bundle/dmg/*.dmg
           - os: windows-latest
             args: ''
-            bundle-glob: |
-              src-tauri/target/release/bundle/nsis/*.exe
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -34,6 +34,8 @@ jobs:
           node-version: 22
           cache: pnpm
 
+      # dtolnay/rust-toolchain@stable ignores rust-toolchain.toml — it installs
+      # whatever "stable" resolves to for the @rev given, not the pinned channel.
       - name: Read pinned Rust toolchain
         id: toolchain
         shell: bash
@@ -56,12 +58,68 @@ jobs:
       - name: Install frontend deps
         run: pnpm install --frozen-lockfile
 
-      - name: Build app bundle
-        run: pnpm tauri build ${{ matrix.args }}
+      # These bullets become both the GitHub release body and latest.json.notes,
+      # which is the text the in-app update banner shows. A pre-release tag
+      # (v0.1.7-rc.1) reads the section of the version it rehearses (0.1.7).
+      - name: Extract the changelog section for this tag
+        id: notes
+        shell: bash
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          BASE="${VERSION%%-*}"
+          BODY="$(awk -v heading="## $BASE " '
+            index($0, heading) == 1 { found = 1; next }
+            /^## / { found = 0 }
+            found
+          ' CHANGELOG.md)"
+          if [ -z "$(echo "$BODY" | tr -d '[:space:]')" ]; then
+            BODY="$(awk '/^## Unreleased$/ { found = 1; next } /^## / { found = 0 } found' CHANGELOG.md)"
+          fi
+          if [ -z "$(echo "$BODY" | tr -d '[:space:]')" ]; then
+            echo "CHANGELOG.md has no '## $BASE' section and no '## Unreleased' — nothing to release." >&2
+            exit 1
+          fi
+          {
+            echo 'body<<CHANGELOG_EOF'
+            echo "$BODY"
+            echo 'CHANGELOG_EOF'
+          } >> "$GITHUB_OUTPUT"
 
-      - name: Upload bundle to draft release
-        uses: softprops/action-gh-release@v2
+      - uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
         with:
-          draft: true
-          generate_release_notes: true
-          files: ${{ matrix.bundle-glob }}
+          tagName: ${{ github.ref_name }}
+          releaseName: Dikto ${{ github.ref_name }}
+          releaseBody: ${{ steps.notes.outputs.body }}
+          releaseDraft: true
+          includeUpdaterJson: true
+          args: ${{ matrix.args }}
+
+  # Both matrix legs write latest.json into the same draft release, and Tauri
+  # validates the whole manifest before it compares versions — one malformed
+  # platform key breaks updates for everyone. This is the check Playwright
+  # cannot do, so it gates publishing.
+  verify-updater-json:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download the manifest from the draft release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release download "$GITHUB_REF_NAME" -R "$GITHUB_REPOSITORY" -p latest.json
+
+      - name: Every platform must carry a URL and a signature
+        run: |
+          cat latest.json
+          jq -e '
+            .version
+            and (.notes | length > 0)
+            and ([.platforms | keys[]] | sort == ["darwin-aarch64", "darwin-x86_64", "windows-x86_64"])
+            and (.platforms | to_entries | all(.value.url != "" and .value.signature != ""))
+          ' latest.json
