@@ -20,47 +20,36 @@ BUNDLE_DIR="$REPO_ROOT/src-tauri/target/release/bundle"
 DEST="/Applications/$APP_NAME"
 
 cd "$REPO_ROOT"
-echo "Building Dikto (pnpm tauri build)..."
-pnpm tauri build
 
-# Tauri removes the staged .app directory under bundle/macos/ after it has
-# packaged the .dmg, so the .app may or may not still be there depending on
-# bundle order — fall back to extracting it from the .dmg when it's gone.
-APP_SRC="$BUNDLE_DIR/macos/$APP_NAME"
-if [[ ! -d "$APP_SRC" ]]; then
-    echo "Staged .app not found at $APP_SRC (tauri cleaned it up after DMG creation) — extracting from the .dmg instead."
-    DMG_PATH="$(find "$BUNDLE_DIR/dmg" -maxdepth 1 -name '*.dmg' -print -quit)"
-    if [[ -z "$DMG_PATH" ]]; then
-        echo "error: no .app in bundle/macos and no .dmg in bundle/dmg — build output not where expected." >&2
-        exit 1
-    fi
-    MOUNT_DIR="$(mktemp -d)"
-    trap 'hdiutil detach "$MOUNT_DIR" -quiet 2>/dev/null || true; rm -rf "$MOUNT_DIR"' EXIT
-    hdiutil attach "$DMG_PATH" -mountpoint "$MOUNT_DIR" -nobrowse -quiet
-    cp -R "$MOUNT_DIR/$APP_NAME" "$REPO_ROOT/src-tauri/target/release/bundle/macos/"
-    hdiutil detach "$MOUNT_DIR" -quiet
-    trap - EXIT
-    APP_SRC="$BUNDLE_DIR/macos/$APP_NAME"
-fi
-
+# Sign during the build, not after it. tauri.conf.json says "-" so a bare
+# `pnpm tauri build` works on a machine without the certificate; this env var
+# overrides it, exactly as the release workflow does. Signing afterwards would
+# leave the .app.tar.gz the updater ships holding an ad-hoc signature — and an
+# ad-hoc update kills the Accessibility and Microphone grants it was supposed
+# to preserve.
 if security find-identity -v -p codesigning 2>/dev/null | grep -q "$CERT_NAME"; then
-    echo "Signing $APP_SRC with \"$CERT_NAME\"..."
-    # No hardened runtime because it buys nothing without notarization, not
-    # because it can't work: the bundle ships zero dylibs or frameworks and
-    # `otool -L` on the binary lists only /System and /usr. cpal talks to
-    # CoreAudio, and enigo is cfg(not(target_os = "macos")) — not compiled
-    # here at all. A Developer ID move stays open.
-    codesign --force --deep -s "$CERT_NAME" "$APP_SRC"
-    echo "Verifying signature..."
-    codesign -dv "$APP_SRC" 2>&1 | grep -E "Authority" || true
+    export APPLE_SIGNING_IDENTITY="$CERT_NAME"
 else
     echo
-    echo "warning: signing identity \"$CERT_NAME\" not found — installing UNSIGNED."
+    echo "warning: signing identity \"$CERT_NAME\" not found — building UNSIGNED."
     echo "Every rebuild will get a new ad-hoc identity, silently revoking your"
     echo "Accessibility/Microphone grants. Run scripts/make-signing-cert.sh once"
     echo "to fix this."
     echo
 fi
+
+echo "Building Dikto (pnpm tauri build)..."
+pnpm tauri build
+
+APP_SRC="$BUNDLE_DIR/macos/$APP_NAME"
+
+# No hardened runtime because it buys nothing without notarization, not
+# because it can't work: the bundle ships zero dylibs or frameworks and
+# `otool -L` on the binary lists only /System and /usr. cpal talks to
+# CoreAudio, and enigo is cfg(not(target_os = "macos")) — not compiled here
+# at all. A Developer ID move stays open.
+echo "Signature as built:"
+codesign -dv "$APP_SRC" 2>&1 | grep -E "Authority|flags" || true
 
 echo "Installing to $DEST..."
 rm -rf "$DEST"
