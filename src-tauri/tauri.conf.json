@@ -70,7 +70,7 @@
   },
   "plugins": {
     "updater": {
-      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEVGNTA0NEExRUIwOEExNUIKUldSYm9RanJvVVJRN3d2RlB2VWZIUjI2dEVZOWZLcWsyY3E1YUhiRjN6U2RDUWhobE1KY1NVS0UK",
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEUzMDdFOThGMEQxRkVEQkMKUldTODdSOE5qK2tINDAxaGdvbXVoOW9tUjFmQmh0ayswU3J5MWQ5cHIxUFNIanQwTTBOZVFCcXIK",
       "endpoints": [
         "https://github.com/PeterZajac/dikto/releases/latest/download/latest.json"
       ]
