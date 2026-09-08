@@ -58,6 +58,43 @@ jobs:
       - name: Install frontend deps
         run: pnpm install --frozen-lockfile
 
+      # Hand-rolled instead of letting tauri-action import APPLE_CERTIFICATE:
+      # that path calls tauri_macos_sign::identity::list, which only matches
+      # certificates whose common name starts with one of seven hardcoded
+      # Apple prefixes ("Developer ID Application:", "Apple Development:", …)
+      # and also requires an organizational unit. A self-signed "Dikto Dev"
+      # matches none of them, so it fails with "failed to resolve signing
+      # identity" no matter how correct the certificate is. Passing only
+      # APPLE_SIGNING_IDENTITY takes tauri's other path, which just runs
+      # `codesign -s` against the keychain search list.
+      - name: Import the signing certificate
+        if: matrix.os == 'macos-14'
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+        run: |
+          KEYCHAIN="$RUNNER_TEMP/dikto.keychain-db"
+          KEYCHAIN_PASSWORD="$(openssl rand -base64 24)"
+          CERT="$RUNNER_TEMP/cert.p12"
+          printf '%s' "$APPLE_CERTIFICATE" | base64 --decode > "$CERT"
+
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security import "$CERT" -k "$KEYCHAIN" -P "$APPLE_CERTIFICATE_PASSWORD" -T /usr/bin/codesign
+          # Without this codesign blocks on a GUI prompt for key access.
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN" > /dev/null
+          # The identity has to be in the search list for `codesign -s` to find it.
+          security list-keychains -d user -s "$KEYCHAIN" $(security list-keychains -d user | tr -d '"')
+          # A self-signed root is not a valid codesigning identity until something
+          # trusts it; the developer's Mac has this from make-signing-cert.sh.
+          security find-certificate -c "$APPLE_SIGNING_IDENTITY" -p "$KEYCHAIN" > "$RUNNER_TEMP/cert.pem"
+          sudo security add-trusted-cert -d -r trustRoot -k /Library/Keychains/System.keychain "$RUNNER_TEMP/cert.pem"
+
+          security find-identity -v -p codesigning "$KEYCHAIN"
+          rm "$CERT" "$RUNNER_TEMP/cert.pem"
+
       # These bullets become both the GitHub release body and latest.json.notes,
       # which is the text the in-app update banner shows. A pre-release tag
       # (v0.1.7-rc.1) reads the section of the version it rehearses (0.1.7).
@@ -90,8 +127,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
-          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          # Deliberately no APPLE_CERTIFICATE — see the import step above.
           APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
         with:
           tagName: ${{ github.ref_name }}
