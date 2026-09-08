@@ -34,6 +34,8 @@
     "allow-open-privacy-settings",
     "allow-open-url",
     "allow-hotkey-capture-start",
-    "autostart:default"
+    "autostart:default",
+    "updater:default",
+    "process:allow-restart"
   ]
 }

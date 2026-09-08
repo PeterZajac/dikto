@@ -41,7 +41,9 @@
   },
   "bundle": {
     "active": true,
+    "createUpdaterArtifacts": true,
     "targets": [
+      "app",
       "dmg",
       "nsis"
     ],
@@ -62,8 +64,16 @@
       }
     },
     "macOS": {
-      "signingIdentity": "-",
+      "signingIdentity": "Dikto Dev",
       "hardenedRuntime": false
+    }
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEVGNTA0NEExRUIwOEExNUIKUldSYm9RanJvVVJRN3d2RlB2VWZIUjI2dEVZOWZLcWsyY3E1YUhiRjN6U2RDUWhobE1KY1NVS0UK",
+      "endpoints": [
+        "https://github.com/PeterZajac/dikto/releases/latest/download/latest.json"
+      ]
     }
   }
 }
