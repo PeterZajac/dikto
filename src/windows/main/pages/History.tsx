@@ -4,6 +4,8 @@ import { api } from "../../../shared/ipc";
 import type { Dictation } from "../../../shared/ipc";
 import { EVENT_HISTORY_CHANGED } from "../../../shared/events";
 import { t, useLang, useT } from "../../../shared/i18n";
+import { formatRelative, pluralCount } from "../../../shared/format";
+import EmptyState from "../components/EmptyState";
 import "./history.css";
 
 const SEARCH_DEBOUNCE_MS = 250;
@@ -209,7 +211,7 @@ export default function HistoryPage() {
 
         <div className="history__toolbar-right">
           {items !== null && (
-            <span className="history__count">{formatCount(count)}</span>
+            <span className="history__count">{pluralCount(count, "history.count")}</span>
           )}
           <button
             type="button"
@@ -366,43 +368,6 @@ function HistoryRow({
       </div>
     </li>
   );
-}
-
-function EmptyState({ icon, title, hint }: { icon: ReactNode; title: string; hint: string }) {
-  return (
-    <div className="history-empty">
-      <div className="history-empty__icon">{icon}</div>
-      <h2 className="history-empty__title">{title}</h2>
-      <p className="history-empty__hint">{hint}</p>
-    </div>
-  );
-}
-
-function formatCount(n: number): string {
-  if (n === 1) return t("history.count.one", { n });
-  if (n >= 2 && n <= 4) return t("history.count.few", { n });
-  return t("history.count.many", { n });
-}
-
-function isSameDay(a: Date, b: Date): boolean {
-  return a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
-}
-
-function formatRelative(ts: number, lang: "en" | "sk"): string {
-  const now = Date.now();
-  const diffMin = Math.floor((now - ts) / 60_000);
-  if (diffMin < 1) return t("time.justNow");
-  if (diffMin < 60) return t("time.minutesAgo", { n: diffMin });
-
-  const date = new Date(ts);
-  const today = new Date();
-  if (isSameDay(date, today)) return t("time.hoursAgo", { n: Math.floor(diffMin / 60) });
-
-  const yesterday = new Date(today);
-  yesterday.setDate(today.getDate() - 1);
-  if (isSameDay(date, yesterday)) return t("time.yesterday");
-
-  return date.toLocaleDateString(lang === "sk" ? "sk-SK" : "en-GB", { day: "numeric", month: "numeric", year: "numeric" });
 }
 
 function formatDuration(durationMs: number): string {
