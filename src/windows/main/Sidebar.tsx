@@ -2,7 +2,7 @@ import type { ReactElement } from "react";
 import { useT, type StringKey } from "../../shared/i18n";
 import brandIcon from "../../assets/dikto-icon.png";
 
-export type NavPage = "settings" | "history";
+export type NavPage = "settings" | "history" | "notes";
 
 export interface FooterWarning {
   id: string;
@@ -22,6 +22,7 @@ interface SidebarProps {
 const NAV_ITEMS: Array<{ id: NavPage; label: StringKey; icon: (props: { active: boolean }) => ReactElement }> = [
   { id: "settings", label: "nav.settings", icon: SettingsIcon },
   { id: "history", label: "nav.history", icon: HistoryIcon },
+  { id: "notes", label: "nav.notes", icon: NotesIcon },
 ];
 
 export default function Sidebar({ page, onNavigate, version, warnings }: SidebarProps) {
@@ -109,6 +110,22 @@ function HistoryIcon({ active }: { active: boolean }) {
       />
       <path d="M2.6 3.4v3.9h3.9" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
       <path d="M10 6.7v3.4l2.4 1.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+function NotesIcon({ active }: { active: boolean }) {
+  return (
+    <svg viewBox="0 0 20 20" width="16" height="16" fill="none" aria-hidden>
+      <path
+        d="M5 2.8h7.2L16 6.6V17a1.2 1.2 0 0 1-1.2 1.2H5A1.2 1.2 0 0 1 3.8 17V4A1.2 1.2 0 0 1 5 2.8Z"
+        stroke="currentColor"
+        strokeWidth="1.5"
+        strokeLinejoin="round"
+        fill={active ? "var(--accent-subtle)" : "none"}
+      />
+      <path d="M11.8 3v3.8H15.8" stroke="currentColor" strokeWidth="1.5" strokeLinejoin="round" />
+      <path d="M6.6 10.4h6.8M6.6 13.4h4.4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
     </svg>
   );
 }

@@ -1,4 +1,5 @@
 import { t, type StringKey } from "./i18n";
+import { isMac } from "./platform";
 
 // Distributes over the union — hence the type parameter rather than StringKey inline.
 type PrefixOf<K extends string> = K extends `${infer P}.one` ? P : never;
@@ -31,4 +32,35 @@ export function formatRelative(ts: number, lang: "en" | "sk"): string {
   if (isSameDay(date, yesterday)) return t("time.yesterday");
 
   return date.toLocaleDateString(lang === "sk" ? "sk-SK" : "en-GB", { day: "numeric", month: "numeric", year: "numeric" });
+}
+
+/** Maps rdev key names to a readable, platform-aware label; other keys keep their name. */
+const KEY_LABELS: Record<string, StringKey> = isMac
+  ? {
+      AltGr: "key.rightOption",
+      Alt: "key.leftOption",
+      ControlRight: "key.rightCtrl",
+      ControlLeft: "key.leftCtrl",
+      MetaRight: "key.rightCmd",
+      MetaLeft: "key.leftCmd",
+      ShiftRight: "key.rightShift",
+      ShiftLeft: "key.leftShift",
+      Space: "key.space",
+    }
+  : {
+      AltGr: "key.rightAlt",
+      Alt: "key.leftAlt",
+      ControlRight: "key.rightCtrl",
+      ControlLeft: "key.leftCtrl",
+      MetaRight: "key.rightWin",
+      MetaLeft: "key.leftWin",
+      ShiftRight: "key.rightShift",
+      ShiftLeft: "key.leftShift",
+      Space: "key.space",
+    };
+
+export function hotkeyLabel(key: string): string {
+  const label = KEY_LABELS[key];
+  if (label) return t(label);
+  return key.replace(/([a-z0-9])([A-Z])/g, "$1 $2");
 }

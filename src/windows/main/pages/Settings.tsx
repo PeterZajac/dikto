@@ -8,7 +8,7 @@ import {
 import { api } from "../../../shared/ipc";
 import type { CleanupStyle, LanguageMode, Settings, UiLanguage } from "../../../shared/ipc";
 import { t, useT, type StringKey } from "../../../shared/i18n";
-import { isMac } from "../../../shared/platform";
+import { hotkeyLabel } from "../../../shared/format";
 import { EVENT_HOTKEY_CAPTURED, EVENT_SETTINGS_CHANGED, type HotkeyCapturedPayload } from "../../../shared/events";
 import "./settings.css";
 
@@ -64,31 +64,6 @@ const RETENTION_OPTIONS: Array<{ id: number; label: StringKey }> = [
   { id: 30, label: "settings.retention.days30" },
   { id: 0, label: "settings.retention.forever" },
 ];
-
-/** Maps rdev key names to a readable, platform-aware label; other keys keep their name. */
-const KEY_LABELS: Record<string, StringKey> = isMac
-  ? {
-      AltGr: "key.rightOption",
-      Alt: "key.leftOption",
-      ControlRight: "key.rightCtrl",
-      ControlLeft: "key.leftCtrl",
-      MetaRight: "key.rightCmd",
-      MetaLeft: "key.leftCmd",
-      ShiftRight: "key.rightShift",
-      ShiftLeft: "key.leftShift",
-      Space: "key.space",
-    }
-  : {
-      AltGr: "key.rightAlt",
-      Alt: "key.leftAlt",
-      ControlRight: "key.rightCtrl",
-      ControlLeft: "key.leftCtrl",
-      MetaRight: "key.rightWin",
-      MetaLeft: "key.leftWin",
-      ShiftRight: "key.rightShift",
-      ShiftLeft: "key.leftShift",
-      Space: "key.space",
-    };
 
 export default function SettingsPage() {
   const [settings, setSettings] = useState<Settings | null>(null);
@@ -490,7 +465,7 @@ export default function SettingsPage() {
           </div>
           <div className="settings-row__control">
             <span className={`keycap${capturing ? " keycap--capturing" : ""}`}>
-              {capturing ? "…" : humanizeKey(settings.hotkey)}
+              {capturing ? "…" : hotkeyLabel(settings.hotkey)}
             </span>
             {capturing ? (
               <button type="button" className="btn" onClick={() => exitCapture(true)}>
@@ -755,12 +730,6 @@ function groqTestNote(saved: boolean, test: "idle" | "testing" | "ok" | "fail"):
   if (test === "ok") return t("settings.groq.testOk");
   if (test === "fail") return t("settings.groq.testFail");
   return "";
-}
-
-function humanizeKey(key: string): string {
-  const label = KEY_LABELS[key];
-  if (label) return t(label);
-  return key.replace(/([a-z0-9])([A-Z])/g, "$1 $2");
 }
 
 function Toggle({

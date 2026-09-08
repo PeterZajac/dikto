@@ -1,5 +1,6 @@
 import { expect, test } from "./fixtures";
 import { openApp } from "./fixtures";
+import { note } from "./tauri-mock";
 
 // Visual check helper, not a test: with SHOTS_DIR set it captures the main
 // screens in both colour schemes, e.g.
@@ -13,6 +14,10 @@ for (const scheme of ["dark", "light"] as const) {
     await page.setViewportSize({ width: 900, height: 620 });
     await openApp(page, "/", {
       settings: { wizard_done: false, cleanup_enabled: true },
+      notes: [
+        note({ id: 1, title: "Groceries", body: "Milk, bread, apples.\nAnd pears, if they look good." }),
+        note({ id: 2, title: "", body: "Nameless thoughts about bananas." }),
+      ],
       meridianOnline: true,
       meridianModels: ["claude-sonnet-5", "claude-opus-5"],
     });
@@ -24,5 +29,10 @@ for (const scheme of ["dark", "light"] as const) {
     await page.locator(".settings-section").nth(3).screenshot({ path: `${dir}/settings-cleanup-${scheme}.png` });
     await page.getByRole("button", { name: "History" }).click();
     await page.screenshot({ path: `${dir}/history-${scheme}.png` });
+    await page.getByRole("button", { name: "Notes" }).click();
+    await page.screenshot({ path: `${dir}/notes-${scheme}.png` });
+    await page.locator(".note-row").first().click();
+    await page.locator(".note-editor__body").focus();
+    await page.screenshot({ path: `${dir}/notes-editor-${scheme}.png` });
   });
 }

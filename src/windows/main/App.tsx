@@ -4,6 +4,7 @@ import { listen } from "@tauri-apps/api/event";
 import Sidebar, { type FooterWarning, type NavPage } from "./Sidebar";
 import SettingsPage from "./pages/Settings";
 import HistoryPage from "./pages/History";
+import NotesPage from "./pages/Notes";
 import Wizard from "./wizard/Wizard";
 import { api } from "../../shared/ipc";
 import type { Settings } from "../../shared/ipc";
@@ -103,7 +104,11 @@ export default function App() {
     <>
       <div className="shell">
         <Sidebar page={page} onNavigate={setPage} version={version} warnings={warnings} />
-        <main className="content">{page === "settings" ? <SettingsPage /> : <HistoryPage />}</main>
+        <main className="content">
+          {page === "settings" && <SettingsPage />}
+          {page === "history" && <HistoryPage />}
+          {page === "notes" && <NotesPage hotkey={settings?.hotkey ?? ""} />}
+        </main>
       </div>
       {settings && !settings.wizard_done && (
         // finish_wizard doesn't emit settings:changed, so flip the flag locally
