@@ -48,10 +48,15 @@ assert_version src-tauri/Cargo.toml "version = \"$VERSION\""
 grep -A 1 -x 'name = "dikto"' src-tauri/Cargo.lock | grep -qx "version = \"$VERSION\"" \
     || { echo "src-tauri/Cargo.lock was not updated to $VERSION" >&2; exit 1; }
 
+TODAY="$(date +%F)"
 if grep -q "^## $VERSION " CHANGELOG.md; then
     echo "CHANGELOG.md already has a $VERSION section — leaving it alone."
+elif grep -q '^## Unreleased$' CHANGELOG.md; then
+    # Bullets written while the work landed become this release's section.
+    sed -i '' "s/^## Unreleased\$/## $VERSION — $TODAY/" CHANGELOG.md
+    echo "CHANGELOG.md: promoted the Unreleased section to $VERSION."
 else
-    awk -v v="$VERSION" -v today="$(date +%F)" '
+    awk -v v="$VERSION" -v today="$TODAY" '
         { print }
         !inserted && /^# Changelog$/ {
             print ""; print "## " v " — " today; print ""; print "- "
@@ -64,7 +69,8 @@ cat <<EOF
 
 Bumped to $VERSION. Next:
 
-  1. Write the CHANGELOG.md bullets for $VERSION.
+  1. Check the CHANGELOG.md bullets for $VERSION read like release notes —
+     they become the GitHub release body and the in-app update banner.
   2. git commit -am "chore: release v$VERSION"
   3. git tag v$VERSION && git push origin main v$VERSION
 EOF

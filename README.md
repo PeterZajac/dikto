@@ -35,6 +35,30 @@ warning click "More info" → "Run anyway". See [docs/WINDOWS.md](docs/WINDOWS.m
 
 UI is English by default; Slovak in Settings → Interface language.
 
+## Notes
+
+The **Notes** tab is a place for dictated text to live. Create a note, click
+into the body and hold the hotkey — the words are typed at the caret, exactly
+as they would be in any other app, and the note autosaves. Notes are stored
+next to History in the app's local database but in their own table, so
+clearing History or hitting the retention window never deletes them.
+
+## Updates
+
+Dikto checks for a new release a few seconds after launch and every six hours
+after that. When one exists you get a banner with the changelog and an
+**Install & restart** button; nothing is ever downloaded or installed without
+that click, and "Later" hides the banner until the next version. You can also
+check by hand in Settings → Updates.
+
+Updating from 0.1.6 changes the app's code-signing identity once, so macOS may
+ask for the Accessibility and Microphone permissions again. If the toggles
+look enabled but dictation does nothing, reset them once:
+
+```sh
+tccutil reset All com.peterzajac.dikto
+```
+
 ## Uninstall
 
 macOS, after quitting Dikto from the tray:

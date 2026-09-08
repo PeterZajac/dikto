@@ -1,5 +1,17 @@
 # Changelog
 
+## Unreleased
+
+- **Notes tab** — a plain-text notepad with a list on the left and an editor
+  on the right, autosaved as you type. Dictate straight into a note: the text
+  is typed at the caret and the take still lands in History. Notes are stored
+  in their own table, so clearing History and the retention sweep leave them
+  alone.
+- **In-app updates** — Dikto notices a new release, shows the changelog, and
+  installs it on click. Never silently.
+- `pnpm bump <version>` updates all four version files and opens the changelog
+  section for a release.
+
 ## 0.1.6 — 2026-09-04
 
 - The bubble's error message dismisses itself after 8 seconds; the take
