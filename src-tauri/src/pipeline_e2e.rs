@@ -8,6 +8,7 @@ use super::*;
 use crate::audio::Recorder;
 use crate::history::{HistoryStore, STATUS_DONE, STATUS_FAILED};
 use crate::hotkey::Interpreter;
+use crate::notes::NotesStore;
 use crate::ratelimit::Limiter;
 use crate::recordings::RecordingStore;
 use crate::settings::{Settings, UiLanguage};
@@ -44,6 +45,8 @@ impl Harness {
                 sink.lock().unwrap().push(v);
             }
         });
+        let history = HistoryStore::open(&dir.path().join("history.sqlite")).unwrap();
+        let notes = NotesStore::new(history.connection()).unwrap();
         let ctx = Arc::new(AppCtx {
             phase: Mutex::new(Phase::Idle),
             recorder: Recorder::new(),
@@ -54,7 +57,8 @@ impl Harness {
             app: app.handle().clone(),
             hotkey_name: Arc::new(RwLock::new("AltGr".into())),
             settings_path: dir.path().join("settings.json"),
-            history: HistoryStore::open(&dir.path().join("history.sqlite")).unwrap(),
+            history,
+            notes,
             recordings: RecordingStore::new(dir.path().join("audio")),
             limiter: Limiter::default(),
             capture_next: Arc::new(AtomicBool::new(false)),

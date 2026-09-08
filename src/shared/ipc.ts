@@ -41,6 +41,16 @@ export interface Dictation {
   error: string | null;
 }
 
+/** Mirrors `Note` in src-tauri/src/notes.rs. An empty title renders as a
+ *  localised "Untitled" — the placeholder is never stored. */
+export interface Note {
+  id: number;
+  title: string;
+  body: string;
+  created_at: number;
+  updated_at: number;
+}
+
 export interface PermissionsStatus {
   accessibility: boolean;
 }
@@ -65,6 +75,14 @@ export const api = {
   historyAudioPath: (id: number) => invoke<string | null>("history_audio_path", { id }),
   // Saves the WAV into the user's Downloads folder, returning the final path.
   historyExportAudio: (id: number) => invoke<string>("history_export_audio", { id }),
+  notesList: (search?: string, limit?: number) =>
+    invoke<Note[]>("notes_list", { search: search ?? null, limit: limit ?? null }),
+  notesGet: (id: number) => invoke<Note | null>("notes_get", { id }),
+  notesCreate: (title?: string) => invoke<Note>("notes_create", { title: title ?? null }),
+  // Partial patch: an omitted field is left as it is on the row.
+  notesUpdate: (id: number, patch: { title?: string; body?: string }) =>
+    invoke<void>("notes_update", { id, title: patch.title ?? null, body: patch.body ?? null }),
+  notesDelete: (id: number) => invoke<void>("notes_delete", { id }),
   // One-token round trip through Meridian — proves it answers, not just listens.
   testCleanup: () => invoke<void>("test_cleanup"),
   permissionsStatus: () => invoke<PermissionsStatus>("permissions_status"),

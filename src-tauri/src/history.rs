@@ -2,10 +2,10 @@ use rusqlite::{params, Connection};
 use serde::Serialize;
 use std::collections::HashSet;
 use std::path::Path;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-pub struct HistoryStore(Mutex<Connection>);
+pub struct HistoryStore(Arc<Mutex<Connection>>);
 
 /// Row written the moment recording stops, before any network call — audio is
 /// on disk but there's no transcript yet.
@@ -58,7 +58,15 @@ impl HistoryStore {
     pub fn open(path: &Path) -> rusqlite::Result<Self> {
         let conn = Connection::open(path)?;
         Self::init_schema(&conn)?;
-        Ok(Self(Mutex::new(conn)))
+        Ok(Self(Arc::new(Mutex::new(conn))))
+    }
+
+    /// Hands the same connection to `NotesStore` — notes live in the same file
+    /// so there is one thing to open, recover and back up, and one mutex, so a
+    /// note autosave can't collide with a history write (rusqlite's default
+    /// rollback journal has `busy_timeout = 0`: a second writer fails at once).
+    pub fn connection(&self) -> Arc<Mutex<Connection>> {
+        self.0.clone()
     }
 
     fn init_schema(conn: &Connection) -> rusqlite::Result<()> {
@@ -122,7 +130,7 @@ impl HistoryStore {
         );
         let conn = Connection::open_in_memory().expect("open in-memory sqlite connection");
         Self::init_schema(&conn).expect("init in-memory schema");
-        Self(Mutex::new(conn))
+        Self(Arc::new(Mutex::new(conn)))
     }
 
     /// Claims a history row for a take whose audio is already on disk, before

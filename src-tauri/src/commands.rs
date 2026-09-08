@@ -1,4 +1,5 @@
 use crate::history::Dictation;
+use crate::notes::Note;
 use crate::pipeline::{self, AppCtx};
 use crate::settings::{self, Settings};
 use crate::state::Event;
@@ -354,4 +355,69 @@ pub fn open_privacy_settings(pane: String) {
     {
         let _ = pane;
     }
+}
+
+// ---- notes ----
+//
+// Every mutation emits `notes:changed` with the reason that caused it: the
+// list always refreshes, but an open editor must ignore the event its own
+// autosave produced, or it would refetch and clobber the sentence being typed.
+
+#[tauri::command]
+pub fn notes_list(
+    ctx: State<'_, Arc<AppCtx>>,
+    search: Option<String>,
+    limit: Option<u32>,
+) -> Vec<Note> {
+    ctx.notes
+        .list(search.as_deref(), limit.unwrap_or(200))
+        .unwrap_or_default()
+}
+
+#[tauri::command]
+pub fn notes_get(ctx: State<'_, Arc<AppCtx>>, id: i64) -> Option<Note> {
+    ctx.notes.get(id).ok().flatten()
+}
+
+#[tauri::command]
+pub fn notes_create(ctx: State<'_, Arc<AppCtx>>, title: Option<String>) -> Result<Note, String> {
+    let note = ctx.notes.create(title.as_deref()).map_err(|e| e.to_string())?;
+    emit_notes_changed(&ctx, Some(note.id), "create");
+    Ok(note)
+}
+
+#[tauri::command]
+pub fn notes_update(
+    ctx: State<'_, Arc<AppCtx>>,
+    id: i64,
+    title: Option<String>,
+    body: Option<String>,
+) -> Result<(), String> {
+    let existed = ctx
+        .notes
+        .update(id, title.as_deref(), body.as_deref())
+        .map_err(|e| e.to_string())?;
+    if !existed {
+        // The note was deleted while the editor still held it; a late autosave
+        // must not resurrect it.
+        let ui = ctx.settings.read().unwrap().ui_language;
+        return Err(ui.pick("note does not exist", "poznámka neexistuje").into());
+    }
+    emit_notes_changed(&ctx, Some(id), "edit");
+    Ok(())
+}
+
+#[tauri::command]
+pub fn notes_delete(ctx: State<'_, Arc<AppCtx>>, id: i64) -> Result<(), String> {
+    // Report the failure rather than swallowing it: a list still showing a
+    // note the user believes is gone is worse than an error.
+    ctx.notes.delete(id).map_err(|e| e.to_string())?;
+    emit_notes_changed(&ctx, Some(id), "delete");
+    Ok(())
+}
+
+fn emit_notes_changed(ctx: &Arc<AppCtx>, id: Option<i64>, reason: &str) {
+    let _ = ctx
+        .app
+        .emit("notes:changed", serde_json::json!({ "id": id, "reason": reason }));
 }

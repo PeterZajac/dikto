@@ -6,6 +6,7 @@ mod hotkey;
 mod inject;
 #[cfg(target_os = "macos")]
 mod macos_tap;
+mod notes;
 mod pipeline;
 mod ratelimit;
 mod recordings;
@@ -71,6 +72,11 @@ pub fn run() {
             commands::history_retry,
             commands::history_audio_path,
             commands::history_export_audio,
+            commands::notes_list,
+            commands::notes_get,
+            commands::notes_create,
+            commands::notes_update,
+            commands::notes_delete,
             commands::test_cleanup,
             commands::permissions_status,
             commands::open_privacy_settings,
@@ -92,6 +98,7 @@ pub fn run() {
             let data_dir = app.path().app_data_dir().expect("app data dir");
             std::fs::create_dir_all(&data_dir).expect("create app data dir");
             let history = history::HistoryStore::open_or_recover(&data_dir.join("history.sqlite"));
+            let notes = notes::NotesStore::open_or_recover(history.connection());
             let recordings = recordings::RecordingStore::new(data_dir.join("audio"));
             startup_maintenance(&history, &recordings, s.history_retention_days, s.ui_language);
 
@@ -130,6 +137,7 @@ pub fn run() {
                 hotkey_name: hotkey_name.clone(),
                 settings_path,
                 history,
+                notes,
                 recordings,
                 limiter: ratelimit::Limiter::default(),
                 capture_next: capture_next.clone(),

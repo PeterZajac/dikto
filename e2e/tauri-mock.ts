@@ -5,11 +5,12 @@
  * Mirrors `@tauri-apps/api/mocks` (callback registry + event plugin) so the
  * real `listen`/`invoke` code paths run unchanged.
  */
-import type { Dictation, Settings } from "../src/shared/ipc";
+import type { Dictation, Note, Settings } from "../src/shared/ipc";
 
 export interface MockSeed {
   settings?: Partial<Settings>;
   history?: Dictation[];
+  notes?: Note[];
   hasGroqKey?: boolean;
   groqTestOk?: boolean;
   meridianOnline?: boolean;
@@ -56,11 +57,24 @@ export function dictation(overrides: Partial<Dictation> & { id: number }): Dicta
   };
 }
 
+export function note(overrides: Partial<Note> & { id: number }): Note {
+  const ts = Date.now() - overrides.id * 60_000;
+  return {
+    title: `Note ${overrides.id}`,
+    body: `Body of note ${overrides.id}.`,
+    created_at: ts,
+    updated_at: ts,
+    ...overrides,
+  };
+}
+
 /** Runs inside the page. Must stay self-contained: it is serialised by Playwright. */
 export function installTauriMock(seed: MockSeed & { settings: Settings }) {
   const state = {
     settings: seed.settings,
     history: seed.history ?? [],
+    notes: seed.notes ?? [],
+    nextNoteId: Math.max(0, ...(seed.notes ?? []).map((n) => n.id)) + 1,
     hasGroqKey: seed.hasGroqKey ?? false,
     groqTestOk: seed.groqTestOk ?? true,
     meridianOnline: seed.meridianOnline ?? false,
@@ -161,6 +175,43 @@ export function installTauriMock(seed: MockSeed & { settings: Settings }) {
         return state.history.find((d) => d.id === args.id)?.audio_path ?? null;
       case "history_export_audio":
         return `/Users/tester/Downloads/dikto-${args.id}.wav`;
+      case "notes_list": {
+        const q = ((args.search as string | null) ?? "").toLowerCase();
+        return state.notes
+          .filter((n) => !q || n.title.toLowerCase().includes(q) || n.body.toLowerCase().includes(q))
+          .sort((a, b) => b.updated_at - a.updated_at || b.id - a.id)
+          .map((n) => ({ ...n }));
+      }
+      case "notes_get": {
+        const found = state.notes.find((n) => n.id === args.id);
+        return found ? { ...found } : null;
+      }
+      case "notes_create": {
+        const now = Date.now();
+        const created = {
+          id: state.nextNoteId++,
+          title: (args.title as string | null) ?? "",
+          body: "",
+          created_at: now,
+          updated_at: now,
+        };
+        state.notes = [created, ...state.notes];
+        emit("notes:changed", { id: created.id, reason: "create" });
+        return { ...created };
+      }
+      case "notes_update": {
+        const row = state.notes.find((n) => n.id === args.id);
+        if (!row) throw "note not found";
+        if (args.title !== null && args.title !== undefined) row.title = args.title as string;
+        if (args.body !== null && args.body !== undefined) row.body = args.body as string;
+        row.updated_at = Date.now();
+        emit("notes:changed", { id: row.id, reason: "edit" });
+        return null;
+      }
+      case "notes_delete":
+        state.notes = state.notes.filter((n) => n.id !== args.id);
+        emit("notes:changed", { id: args.id as number, reason: "delete" });
+        return null;
       case "permissions_status":
         return { accessibility: state.accessibility };
       case "finish_wizard":
@@ -203,6 +254,8 @@ export interface MockHandle {
   state: {
     settings: Settings;
     history: Dictation[];
+    notes: Note[];
+    nextNoteId: number;
     hasGroqKey: boolean;
     groqTestOk: boolean;
     meridianOnline: boolean;

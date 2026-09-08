@@ -14,6 +14,8 @@ export const EVENT_SETTINGS_CHANGED = "settings:changed";
 /** Fired whenever a dictation row is created or updated by the backend. */
 export const EVENT_HISTORY_CHANGED = "history:changed";
 export const EVENT_HOTKEY_CAPTURED = "hotkey:captured";
+/** Fired whenever a note is created, edited or deleted by the backend. */
+export const EVENT_NOTES_CHANGED = "notes:changed";
 
 export interface StatePayload {
   phase: Phase;
@@ -32,4 +34,10 @@ export interface PipelineDeadPayload {
 }
 export interface HotkeyCapturedPayload {
   key: string;
+}
+export interface NotesChangedPayload {
+  id: number | null;
+  /** The open editor ignores an "edit" it caused itself, so autosave can't
+   *  clobber the sentence being typed. The list always refreshes. */
+  reason: "create" | "edit" | "delete";
 }

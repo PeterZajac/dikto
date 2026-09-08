@@ -22,6 +22,11 @@ fn main() {
             "open_privacy_settings",
             "open_url",
             "hotkey_capture_start",
+            "notes_list",
+            "notes_get",
+            "notes_create",
+            "notes_update",
+            "notes_delete",
         ])),
     )
     .expect("failed to run tauri-build");

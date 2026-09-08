@@ -69,6 +69,8 @@ pub struct AppCtx<R: Runtime = Wry> {
     pub hotkey_name: Arc<RwLock<String>>,
     pub settings_path: PathBuf,
     pub history: crate::history::HistoryStore,
+    /// Notes share `history`'s connection — same file, same mutex.
+    pub notes: crate::notes::NotesStore,
     /// WAV files behind the history rows.
     pub recordings: RecordingStore,
     /// Shared throttle in front of Groq — keeps the live preview from spending
