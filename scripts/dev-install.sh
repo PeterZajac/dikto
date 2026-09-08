@@ -45,8 +45,11 @@ fi
 
 if security find-identity -v -p codesigning 2>/dev/null | grep -q "$CERT_NAME"; then
     echo "Signing $APP_SRC with \"$CERT_NAME\"..."
-    # No hardened runtime: Dikto loads unsigned dylibs (cpal/enigo backends);
-    # hardened runtime would refuse to load them.
+    # No hardened runtime because it buys nothing without notarization, not
+    # because it can't work: the bundle ships zero dylibs or frameworks and
+    # `otool -L` on the binary lists only /System and /usr. cpal talks to
+    # CoreAudio, and enigo is cfg(not(target_os = "macos")) — not compiled
+    # here at all. A Developer ID move stays open.
     codesign --force --deep -s "$CERT_NAME" "$APP_SRC"
     echo "Verifying signature..."
     codesign -dv "$APP_SRC" 2>&1 | grep -E "Authority" || true

@@ -61,6 +61,25 @@ grants tied to the old one: the toggle still shows ON but the permission is
 dead. Remove Dikto from the Accessibility list and add it again after an
 update.
 
+Measured on the installed 0.1.6 build — `codesign -d -r-
+/Applications/Dikto.app`:
+
+```
+designated => cdhash H"712cd364…" or cdhash H"7b5ab1b6…"
+flags=0x2(adhoc)   TeamIdentifier=not set
+```
+
+TCC stores that requirement when you grant a permission and re-checks it on
+every launch, and a cdhash is a hash of the code — hence the dead toggle. The
+same command on a binary signed with "Dikto Dev" gives `identifier "…" and
+certificate leaf H"…"` instead, which survives rebuilds.
+
+Hardened runtime is off because it buys nothing without notarization, **not**
+because the app can't take it: the bundle contains no dylibs or frameworks
+and `otool -L` on the binary lists only `/System` and `/usr` paths. cpal uses
+CoreAudio, and `enigo` is a `cfg(not(target_os = "macos"))` dependency that
+is never compiled on macOS. A Developer ID move stays open.
+
 For local iteration, sign with a fixed self-signed certificate so grants
 survive rebuilds. One-time setup:
 

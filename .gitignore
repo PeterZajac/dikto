@@ -24,6 +24,8 @@ dist-ssr
 *.sw?
 # secrets
 .env
+*.p12
+*.key
 
 # Playwright
 test-results
