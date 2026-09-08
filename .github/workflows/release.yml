@@ -114,12 +114,16 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: gh release download "$GITHUB_REF_NAME" -R "$GITHUB_REPOSITORY" -p latest.json
 
+      # Subset, not equality: tauri-action also emits a `windows-x86_64-nsis`
+      # key alongside `windows-x86_64`, and would emit more if a target were
+      # ever added. What matters is that the three the app asks for are there
+      # and that nothing carries an empty url or signature.
       - name: Every platform must carry a URL and a signature
         run: |
           cat latest.json
           jq -e '
             .version
             and (.notes | length > 0)
-            and ([.platforms | keys[]] | sort == ["darwin-aarch64", "darwin-x86_64", "windows-x86_64"])
+            and ((["darwin-aarch64", "darwin-x86_64", "windows-x86_64"] - [.platforms | keys[]]) | length == 0)
             and (.platforms | to_entries | all(.value.url != "" and .value.signature != ""))
           ' latest.json
