@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.1.7 — 2026-09-08
 
 - **Notes tab** — a plain-text notepad with a list on the left and an editor
   on the right, autosaved as you type. Dictate straight into a note: the text
