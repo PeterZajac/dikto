@@ -9,6 +9,7 @@ import { api } from "../../../shared/ipc";
 import type { CleanupStyle, LanguageMode, Settings, UiLanguage } from "../../../shared/ipc";
 import { t, useT, type StringKey } from "../../../shared/i18n";
 import { hotkeyLabel } from "../../../shared/format";
+import type { UpdateState } from "../../../shared/update";
 import { EVENT_HOTKEY_CAPTURED, EVENT_SETTINGS_CHANGED, type HotkeyCapturedPayload } from "../../../shared/events";
 import "./settings.css";
 
@@ -65,7 +66,14 @@ const RETENTION_OPTIONS: Array<{ id: number; label: StringKey }> = [
   { id: 0, label: "settings.retention.forever" },
 ];
 
-export default function SettingsPage() {
+interface SettingsPageProps {
+  /** Owned by App so this section and the banner can never disagree. */
+  update: UpdateState;
+  onCheckForUpdates: () => void;
+  version: string;
+}
+
+export default function SettingsPage({ update, onCheckForUpdates, version }: SettingsPageProps) {
   const [settings, setSettings] = useState<Settings | null>(null);
   const [loaded, setLoaded] = useState(false);
   const [loadError, setLoadError] = useState(false);
@@ -720,8 +728,48 @@ export default function SettingsPage() {
           </div>
         </div>
       </section>
+
+      <section className="settings-section">
+        <div className="settings-section__head">
+          <h2 className="settings-section__title">{t("update.section.title")}</h2>
+          <p className="settings-section__desc">{t("update.section.desc", { version: version || "…" })}</p>
+        </div>
+        <div className="settings-row">
+          <div className="settings-row__text">
+            <span className="settings-row__label">{t("update.check")}</span>
+            <span className="inline-note inline-note--muted">{updateNote(update)}</span>
+          </div>
+          <div className="settings-row__control">
+            <button
+              type="button"
+              className="btn"
+              onClick={onCheckForUpdates}
+              disabled={update.kind === "checking" || update.kind === "downloading"}
+            >
+              {update.kind === "checking" ? t("update.checking") : t("update.check")}
+            </button>
+          </div>
+        </div>
+      </section>
     </div>
   );
+}
+
+function updateNote(update: UpdateState): string {
+  switch (update.kind) {
+    case "checking":
+      return t("update.checking");
+    case "available":
+      return t("update.available.title", { version: update.version });
+    case "downloading":
+      return t("update.downloading", { percent: update.percent });
+    case "ready":
+      return t("update.installing");
+    case "error":
+      return t("update.failed", { message: update.message });
+    default:
+      return t("update.upToDate");
+  }
 }
 
 function groqTestNote(saved: boolean, test: "idle" | "testing" | "ok" | "fail"): string {

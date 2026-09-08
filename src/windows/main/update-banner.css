@@ -1,0 +1,100 @@
+/* Update prompt — sits at the top of .content, above the page.
+   Deliberately not a FooterWarning: an available update is not a warning, and
+   painting it amber trains the user to ignore the real ones. */
+
+.update-banner {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-4);
+  /* Matches .settings (560), the page it sits above by default; on the wider
+     History and Notes it stays centred. */
+  max-width: 560px;
+  margin: 0 auto var(--space-5);
+  padding: var(--space-4);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-md);
+  background: var(--bg-hover);
+}
+
+.update-banner--error {
+  border-color: var(--danger-border);
+  background: var(--danger-subtle);
+  color: var(--danger);
+}
+
+.update-banner__text {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.update-banner__title {
+  font-size: var(--text-base);
+  font-weight: var(--weight-semibold);
+  color: inherit;
+}
+
+.update-banner__notes summary {
+  font-size: var(--text-sm);
+  color: var(--text-secondary);
+  cursor: default;
+}
+
+.update-banner__notes-body {
+  margin: var(--space-2) 0 0;
+  white-space: pre-wrap;
+  font: inherit;
+  font-size: var(--text-sm);
+  line-height: var(--leading-normal);
+  color: var(--text-secondary);
+}
+
+.update-banner__note {
+  margin: 0;
+  font-size: var(--text-xs);
+  color: var(--text-tertiary);
+}
+
+.update-banner__actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-shrink: 0;
+}
+
+.update-banner__btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-2) var(--space-4);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-pill);
+  background: var(--bg);
+  color: var(--text);
+  font: inherit;
+  font-size: var(--text-sm);
+  font-weight: var(--weight-medium);
+  cursor: default;
+  white-space: nowrap;
+  transition: background-color 120ms ease, opacity 120ms ease;
+}
+
+.update-banner__btn:hover {
+  background: var(--bg-hover);
+}
+
+.update-banner__btn--primary {
+  border-color: transparent;
+  background: var(--accent);
+  color: var(--accent-contrast);
+}
+
+.update-banner__btn--primary:hover {
+  background: var(--accent);
+}
+
+.update-banner__btn:disabled {
+  opacity: 0.7;
+}

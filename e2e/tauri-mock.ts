@@ -7,7 +7,15 @@
  */
 import type { Dictation, Note, Settings } from "../src/shared/ipc";
 
+/** What `plugin:updater|check` should answer with. */
+export interface MockUpdate {
+  version: string;
+  notes: string;
+}
+
 export interface MockSeed {
+  /** null (the default) means "no update available". */
+  update?: MockUpdate | null;
   settings?: Partial<Settings>;
   history?: Dictation[];
   notes?: Note[];
@@ -83,6 +91,9 @@ export function installTauriMock(seed: MockSeed & { settings: Settings }) {
     accessibility: seed.accessibility ?? true,
     failing: seed.failing ?? {},
     version: "9.9.9",
+    update: seed.update ?? null,
+    installed: false,
+    restarted: false,
   };
   const calls: { cmd: string; args: Record<string, unknown> }[] = [];
 
@@ -217,6 +228,31 @@ export function installTauriMock(seed: MockSeed & { settings: Settings }) {
       case "finish_wizard":
         state.settings = { ...s, wizard_done: true };
         return null;
+      case "plugin:updater|check":
+        return state.update
+          ? {
+              rid: 1,
+              currentVersion: state.version,
+              version: state.update.version,
+              date: null,
+              body: state.update.notes,
+              rawJson: {},
+            }
+          : null;
+      case "plugin:updater|download_and_install": {
+        // The real plugin streams progress over a Channel; the mock drives the
+        // same handler directly so the hook's percent maths is exercised.
+        const channel = args.onEvent as { onmessage?: (m: unknown) => void } | undefined;
+        channel?.onmessage?.({ event: "Started", data: { contentLength: 200 } });
+        channel?.onmessage?.({ event: "Progress", data: { chunkLength: 100 } });
+        channel?.onmessage?.({ event: "Progress", data: { chunkLength: 100 } });
+        channel?.onmessage?.({ event: "Finished" });
+        state.installed = true;
+        return null;
+      }
+      case "plugin:process|restart":
+        state.restarted = true;
+        return null;
       case "plugin:app|version":
         return state.version;
       case "plugin:autostart|is_enabled":
@@ -263,6 +299,9 @@ export interface MockHandle {
     cleanupTestOk: boolean;
     accessibility: boolean;
     failing: Record<string, string>;
+    update: MockUpdate | null;
+    installed: boolean;
+    restarted: boolean;
   };
   calls: MockCall[];
   emit: (event: string, payload: unknown) => void;

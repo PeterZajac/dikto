@@ -6,10 +6,12 @@ import SettingsPage from "./pages/Settings";
 import HistoryPage from "./pages/History";
 import NotesPage from "./pages/Notes";
 import Wizard from "./wizard/Wizard";
+import UpdateBanner from "./UpdateBanner";
 import { api } from "../../shared/ipc";
 import type { Settings } from "../../shared/ipc";
 import { EVENT_PIPELINE_DEAD, EVENT_SETTINGS_CHANGED, type PipelineDeadPayload } from "../../shared/events";
 import { useT } from "../../shared/i18n";
+import { useUpdateCheck } from "../../shared/update";
 import "./app.css";
 
 export default function App() {
@@ -19,6 +21,7 @@ export default function App() {
   const [pipelineDeadMessage, setPipelineDeadMessage] = useState<string | null>(null);
   const [settings, setSettings] = useState<Settings | null>(null);
   const t = useT();
+  const update = useUpdateCheck();
 
   useEffect(() => {
     let cancelled = false;
@@ -105,7 +108,12 @@ export default function App() {
       <div className="shell">
         <Sidebar page={page} onNavigate={setPage} version={version} warnings={warnings} />
         <main className="content">
-          {page === "settings" && <SettingsPage />}
+          {update.visible && (
+            <UpdateBanner state={update.state} onInstall={update.install} onDismiss={update.dismiss} />
+          )}
+          {page === "settings" && (
+            <SettingsPage update={update.state} onCheckForUpdates={update.check} version={version} />
+          )}
           {page === "history" && <HistoryPage />}
           {page === "notes" && <NotesPage hotkey={settings?.hotkey ?? ""} />}
         </main>

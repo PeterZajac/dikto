@@ -10,10 +10,12 @@ const dir = process.env.SHOTS_DIR;
 for (const scheme of ["dark", "light"] as const) {
   test(`screenshots (${scheme})`, async ({ page, platform }) => {
     test.skip(!dir || platform !== "mac", "set SHOTS_DIR to capture screenshots");
+    await page.clock.install();
     await page.emulateMedia({ colorScheme: scheme });
-    await page.setViewportSize({ width: 900, height: 620 });
+    await page.setViewportSize({ width: 1024, height: 700 });
     await openApp(page, "/", {
       settings: { wizard_done: false, cleanup_enabled: true },
+      update: { version: "0.1.7", notes: "- Notes tab\n- A quieter error pill" },
       notes: [
         note({ id: 1, title: "Groceries", body: "Milk, bread, apples.\nAnd pears, if they look good." }),
         note({ id: 2, title: "", body: "Nameless thoughts about bananas." }),
@@ -25,6 +27,9 @@ for (const scheme of ["dark", "light"] as const) {
     await page.screenshot({ path: `${dir}/wizard-${scheme}.png` });
     await page.getByRole("button", { name: "Skip setup" }).click();
     await expect(page.getByRole("heading", { name: "Settings", level: 1 })).toBeVisible();
+    await page.clock.fastForward(6_000);
+    await expect(page.locator(".update-banner")).toBeVisible();
+    await page.locator(".update-banner").screenshot({ path: `${dir}/update-banner-${scheme}.png` });
     await page.screenshot({ path: `${dir}/settings-${scheme}.png` });
     await page.locator(".settings-section").nth(3).screenshot({ path: `${dir}/settings-cleanup-${scheme}.png` });
     await page.getByRole("button", { name: "History" }).click();

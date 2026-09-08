@@ -221,6 +221,24 @@ const STRINGS = {
   "notes.saving": { en: "Saving…", sk: "Ukladám…" },
   "notes.saveError": { en: "Not saved", sk: "Neuložené" },
 
+  // ---- updates ----
+  "update.available.title": { en: "Dikto {version} is available", sk: "Je k dispozícii Dikto {version}" },
+  "update.available.notes": { en: "What's new", sk: "Čo je nové" },
+  "update.install": { en: "Install & restart", sk: "Nainštalovať a reštartovať" },
+  "update.later": { en: "Later", sk: "Neskôr" },
+  "update.downloading": { en: "Downloading {percent}%", sk: "Sťahujem {percent}%" },
+  "update.installing": { en: "Installing…", sk: "Inštalujem…" },
+  "update.failed": { en: "Update failed: {message}", sk: "Aktualizácia zlyhala: {message}" },
+  "update.permissionsNote": {
+    en: "After updating, macOS may ask for the Accessibility and Microphone permissions again.",
+    sk: "Po aktualizácii môže macOS znova pýtať povolenia na Zjednodušenie prístupu a mikrofón.",
+  },
+  "update.section.title": { en: "Updates", sk: "Aktualizácie" },
+  "update.section.desc": { en: "You're running Dikto {version}.", sk: "Máš spustené Dikto {version}." },
+  "update.check": { en: "Check for updates", sk: "Skontrolovať aktualizácie" },
+  "update.checking": { en: "Checking…", sk: "Kontrolujem…" },
+  "update.upToDate": { en: "You're up to date.", sk: "Máš najnovšiu verziu." },
+
   "time.justNow": { en: "just now", sk: "práve teraz" },
   "time.minutesAgo": { en: "{n} min ago", sk: "pred {n} min" },
   "time.hoursAgo": { en: "{n} h ago", sk: "pred {n} h" },
